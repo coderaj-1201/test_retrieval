@@ -181,27 +181,27 @@ def build_answer_card(agent_response: dict) -> dict:
     # Build title → url lookup so citations can be rendered as clickable links.
     url_map: dict[str, str | None] = {s["title"]: s.get("url") for s in sources}
 
-    if show_citations and llm_citations:
+    def _render_citations(heading: str, cites: list[dict]) -> None:
         body.append({
-            "type": "TextBlock", "text": "**Sources**",
+            "type": "TextBlock", "text": f"**{heading}**",
             "wrap": True, "size": "Small", "weight": "Bolder",
             "spacing": "Medium", "separator": True,
         })
-        seen_titles: set[str] = set()
-        for cite in llm_citations:
+        seen: set[str] = set()
+        for cite in cites:
             raw_title = cite.get("title") or "Source"
-            # Strip " (p.N)" and " | heading" suffixes that the LLM echoes
-            # back from the context label — display and URL lookup use the
-            # clean doc name only.
             title = re.sub(r"\s*\(p\.\d+\).*$", "", raw_title).strip()
-            if title in seen_titles:
+            if title in seen:
                 continue
-            seen_titles.add(title)
-            if len(seen_titles) > 5:
+            seen.add(title)
+            if len(seen) > 8:
                 break
             score = float(cite.get("confidence", 0.0))
             url   = url_map.get(title)
             body.append(_citation_row(title, url, score))
+
+    if show_citations and llm_citations:
+        _render_citations("Sources", llm_citations)
 
     elif show_citations and not llm_citations:
         # LLM said show citations but returned none — fall back to search sources
@@ -211,12 +211,17 @@ def build_answer_card(agent_response: dict) -> dict:
                 "wrap": True, "size": "Small", "weight": "Bolder",
                 "spacing": "Medium", "separator": True,
             })
-            for src in sources[:5]:
+            for src in sources[:8]:
                 title = src["title"]
                 url   = src.get("url")
                 body.append(_citation_row(title, url))
 
-    # show_citations = False → no citation block at all (greeting / low confidence)
+    elif not show_citations and llm_citations:
+        # Partial / conflicting answer — confidence below threshold but real
+        # documents were referenced. Show them under a softer label.
+        _render_citations("Referenced Documents", llm_citations)
+
+    # show_citations = False and no llm_citations → no block (greeting / full no-match)
 
     return {
         "contentType": "application/vnd.microsoft.card.adaptive",

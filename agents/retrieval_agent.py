@@ -143,10 +143,9 @@ OUTPUT FORMAT — always return valid JSON, nothing else
 }
 
 Rules for citations array:
-- Only populate when show_citations = true
-- List only documents that actually contributed to the answer
+- Always populate with every document that contributed to the answer, regardless of show_citations
+- Include ALL contributing documents — do not omit sources just because confidence is lower
 - Order by relevance (highest confidence first)
-- If show_citations = false, set citations = []
 - Do not include any text outside the JSON object
 """
 
@@ -327,15 +326,10 @@ async def synthesize_answer(inp: SynthesisInput) -> tuple[str, float, list[Sourc
         # knowledge questions as "general", incorrectly suppressing citations
         # on otherwise-successful answers.
         show_citations = confidence >= settings.CONFIDENCE_THRESHOLD
-        if show_citations:
-            # Drop individual weak citations even when the overall answer is
-            # confident enough to show citations at all.
-            llm_citations = [
-                c for c in llm_citations
-                if float(c.get("confidence", 0.0) or 0.0) >= settings.CITATION_CONFIDENCE_THRESHOLD
-            ]
-        else:
-            llm_citations = []
+        # Keep all citations the LLM returned regardless of show_citations or
+        # per-doc confidence — partial/conflicting answers still have real sources
+        # and the card renderer will show them under a "Referenced Documents" label.
+        # Per-doc confidence scores are preserved for the badge display.
         if not answer:
             raise ValueError("Empty answer field in synthesis response.")
         # Hard cap: truncate at the last complete sentence within the limit

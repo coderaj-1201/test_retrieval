@@ -127,6 +127,13 @@ decide response_type:
   terms (celebrity trivia, sports scores, general knowledge, personal questions),
   regardless of memory context.
 
+IMPORTANT — reformatting instructions: if the query is a command to reformat or
+condense a prior answer ("summarize", "in 10 words", "bullet points", "shorter",
+"simplify", "rephrase", "one sentence", etc.) AND the memory context shows a
+prior in-domain turn, do NOT set domain="none". Instead assign the same domain
+as the most recent prior turn and set is_followup=true. These are valid follow-up
+instructions, not out-of-scope queries.
+
 Write deflection_message as a short, NON-REPETITIVE message in your own words
 each time — never reuse the same exact wording across different questions or
 session — tone depends on response_type:

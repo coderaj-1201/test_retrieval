@@ -115,6 +115,11 @@ _FOLLOWUP_PHRASES = (
     "what about", "and the", "tell me more", "more details", "what else",
     "how about", "can you explain", "elaborate", "and what", "what if",
     "same for", "related to", "similar to", "what is the difference",
+    # Reformatting / instruction commands directed at a prior answer
+    "summarize", "summary", "in 10 words", "in 5 words", "in bullet",
+    "bullet point", "shorter", "briefly", "simplify", "rephrase",
+    "explain in", "in simple", "in points", "give me a summary",
+    "make it shorter", "translate", "in one line", "one sentence",
 )
 # Bare pronouns that reference something from a prior turn.
 _PRONOUN_RE = re.compile(
