@@ -264,7 +264,7 @@ class IronmanBot(ActivityHandler):
                 ))
         else:
             await turn_context.send_activity(
-                "⚠️ I wasn't able to find an answer. Please try rephrasing your question."
+                "⚠️ I wasn't able to provide a response at this time. Please try rephrasing your question."
             )
 
     async def _handle_card_action(self, turn_context: TurnContext) -> None:
