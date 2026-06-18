@@ -148,12 +148,18 @@ def needs_session_context(query: str) -> bool:
 
 def format_session_context(session: SessionMemory, query: str = "") -> str:
     """
-    Always returns the last few turns so the classifier LLM can decide
-    whether the query is a follow-up. The old rule-based gate caused it
-    to miss topic-reference follow-ups like "What about the approval
-    process?" that lack explicit pronouns.
+    Returns the last few turns only when the heuristic suggests the query
+    may be a follow-up (short text, pronoun, or known follow-up phrase).
+    Standalone questions skip the context block entirely, saving tokens and
+    avoiding spurious is_followup classifications by the LLM.
+
+    The rewrite step downstream is already gated on is_followup=True, so
+    even if the heuristic passes context through on a borderline query the
+    classifier LLM still makes the final call on whether to rewrite.
     """
     if not session.turns:
+        return ""
+    if not needs_session_context(query):
         return ""
     recent = session.turns[-_SESSION_CONTEXT_TURNS:]
     lines = [f"## Recent conversation (last {len(recent)} turn(s))"]
