@@ -260,8 +260,13 @@ def build_feedback_card(agent_response: dict) -> dict:
                 "placeholder": placeholder, "isMultiline": True, "maxLength": 500,
             }],
             "actions": [{
-                "type": "Action.Submit", "title": "Submit",
-                "data": {**_fb, "action": "feedback", "feedback": feedback_type},
+                # Action.Execute (Universal Actions) replaces the card inline via
+                # an invoke response — no "Your response was sent to the app" banner
+                # and the comment box closes atomically on first submit.
+                "type": "Action.Execute",
+                "title": "Submit",
+                "verb": "submit_feedback",
+                "data": {**_fb, "feedback": feedback_type},
             }]
         }
 

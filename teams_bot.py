@@ -23,7 +23,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 import uvicorn
-from botbuilder.core import ActivityHandler, TurnContext
+from botbuilder.core import ActivityHandler, InvokeResponse, TurnContext
 from botbuilder.integration.aiohttp import CloudAdapter, ConfigurationBotFrameworkAuthentication
 from botbuilder.schema import Activity, ActivityTypes, Attachment
 from dotenv import load_dotenv
@@ -355,6 +355,78 @@ class IronmanBot(ActivityHandler):
             await turn_context.send_activity(
                 "Couldn't process escalation. Please try again."
             )
+
+    async def on_invoke_activity(self, turn_context: TurnContext) -> InvokeResponse:
+        if turn_context.activity.name == "adaptiveCard/action":
+            return await self._handle_adaptive_card_invoke(turn_context)
+        return await super().on_invoke_activity(turn_context)
+
+    async def _handle_adaptive_card_invoke(self, turn_context: TurnContext) -> InvokeResponse:
+        """
+        Handle Universal Action (Action.Execute) invokes from adaptive cards.
+        Returns an inline card-replacement response — no Teams info banner,
+        and the comment box is atomically replaced on first submit.
+        """
+        value      = turn_context.activity.value or {}
+        action     = value.get("action", {})
+        verb       = action.get("verb")
+        data       = action.get("data", {})
+        inputs     = action.get("inputs", {})
+        from_prop  = turn_context.activity.from_property
+
+        if verb != "submit_feedback":
+            return InvokeResponse(status=200, body={
+                "statusCode": 501,
+                "type": "application/vnd.microsoft.error",
+                "value": {"code": "NotImplemented", "message": f"Unknown verb: {verb}"},
+            })
+
+        raw    = data.get("feedback", "")
+        rating = (
+            "thumbs_up"   if raw == "positive"
+            else "thumbs_down" if raw == "negative"
+            else "neutral"
+        )
+        comment = _sanitise_user_text(inputs.get("feedback_comment", ""))[:2000]
+
+        payload = {
+            "question_id":     data.get("question_id", ""),
+            "answer_id":       data.get("answer_id", ""),
+            "conversation_id": data.get("conversation_id", ""),
+            "user_id":         data.get("user_id") or (from_prop.id if from_prop else "anonymous"),
+            "rating":          rating,
+            "comment":         comment,
+        }
+        try:
+            await call_feedback(payload)
+            msg = (
+                "👍 Thanks, glad it was helpful!"
+                if rating == "thumbs_up"
+                else "👎 Thanks, we'll use this to improve!"
+            )
+            logger.info(
+                "feedback_saved question_id=%s rating=%s",
+                payload["question_id"], rating,
+            )
+        except Exception as exc:
+            logger.error("feedback_invoke_failed: %s", exc, exc_info=True)
+            msg = "Couldn't save feedback. Please try again."
+
+        thanks_card = {
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "type": "AdaptiveCard",
+            "version": "1.4",
+            "body": [{
+                "type": "TextBlock", "text": msg,
+                "wrap": True, "size": "Small", "isSubtle": True,
+            }],
+        }
+        # Returning this as the invoke response replaces the card inline.
+        return InvokeResponse(status=200, body={
+            "statusCode": 200,
+            "type": "application/vnd.microsoft.card.adaptive",
+            "value": thanks_card,
+        })
 
     async def on_members_added_activity(self, members_added, turn_context: TurnContext) -> None:
         for member in members_added:
