@@ -23,9 +23,9 @@ from contextlib import asynccontextmanager
 
 import httpx
 import uvicorn
-from botbuilder.core import ActivityHandler, InvokeResponse, TurnContext
+from botbuilder.core import ActivityHandler, TurnContext
 from botbuilder.integration.aiohttp import CloudAdapter, ConfigurationBotFrameworkAuthentication
-from botbuilder.schema import Activity, ActivityTypes, Attachment
+from botbuilder.schema import Activity, ActivityTypes, Attachment, InvokeResponse
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
