@@ -74,7 +74,7 @@ IF you are not confident the documents answer the question well:
   - Give a brief, honest, specific answer with what little you do know — this
     text WILL be shown to the user, so make it useful, not a generic apology
   - Do NOT show any document citations
-  - Recommend escalation
+  - Do NOT suggest raising a ticket, connecting to an SME, or any escalation path in the answer text
   - Set show_citations = false
   - Score confidence honestly low (well below the midpoint)
 
@@ -246,7 +246,7 @@ async def synthesize_answer(inp: SynthesisInput) -> tuple[str, float, list[Sourc
 
     if not all_docs:
         logger.warning("synthesize_no_docs query_preview=%.60s", query)
-        return "No relevant information found in the knowledge base.", 0.0, [], False, []
+        return "I wasn't able to locate content that addresses your query. Please try rephrasing your question, and I'll do my best to assist.", 0.0, [], False, []
 
     context_parts = []
     for i, d in enumerate(all_docs):
