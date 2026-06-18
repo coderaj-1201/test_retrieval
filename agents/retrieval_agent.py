@@ -246,7 +246,7 @@ async def synthesize_answer(inp: SynthesisInput) -> tuple[str, float, list[Sourc
 
     if not all_docs:
         logger.warning("synthesize_no_docs query_preview=%.60s", query)
-        return "I wasn't able to locate content that addresses your query. Please try rephrasing your question, and I'll do my best to assist.", 0.0, [], False, []
+        return "I can help you with questions related to Operations. I couldn't find any answers for this query in the available knowledge base.", 0.0, [], False, []
 
     context_parts = []
     for i, d in enumerate(all_docs):

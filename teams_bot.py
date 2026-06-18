@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import hashlib
 import uuid
 import re
 from contextlib import asynccontextmanager
@@ -215,18 +214,11 @@ class IronmanBot(ActivityHandler):
             user_id, tenant_id, conversation_id, user_text,
         )
 
-        # Stable idempotency key: same user + same conversation + same text
-        # always maps to the same key, so repeated sends return the cached answer.
-        idempotency_key = "q-" + hashlib.sha256(
-            f"{user_id}:{conversation_id}:{user_text}".encode()
-        ).hexdigest()[:24]
-
         try:
             data = await call_main_agent({
-                "text":             user_text,
-                "conversation_id":  conversation_id,
-                "user_id":          user_id,
-                "idempotency_key":  idempotency_key,
+                "text":            user_text,
+                "conversation_id": conversation_id,
+                "user_id":         user_id,
             })
         except Exception as exc:
             logger.error("main_agent_call_failed: %s", exc, exc_info=True)

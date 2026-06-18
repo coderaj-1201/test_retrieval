@@ -648,23 +648,6 @@ async def query(body: QueryBody) -> Response:
 
     conversation_id = body.conversation_id or str(uuid.uuid4())
 
-    # Idempotency — check Cosmos first so restarts don't lose the cache.
-    if body.idempotency_key:
-        cached = await asyncio.to_thread(
-            get_document,
-            get_chat_container(),
-            body.idempotency_key,
-            conversation_id,
-        )
-        if cached and cached.get("status") in ("success", "out_of_scope", "ticket_raised", "sme_connecting"):
-            logger.info("idempotency_hit key=%s", body.idempotency_key)
-            clean = {k: v for k, v in cached.items() if not k.startswith("_")}
-            return Response(
-                content=json.dumps(clean),
-                media_type="application/json",
-                headers={"X-Idempotency": "hit"},
-            )
-
     user_query = UserQuery(
         text=body.text,
         conversation_id=conversation_id,
