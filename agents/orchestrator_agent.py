@@ -175,6 +175,8 @@ _REFORMAT_VERBS = frozenset({
     "bullet point", "bullet points", "in 10 words", "in 5 words", "in one line",
     "one sentence", "in points", "give me a summary", "make it shorter",
     "tl;dr", "tldr", "condense", "shorten", "explain in simple",
+    "concise", "short answer", "brief answer", "short summary", "quick summary",
+    "in brief", "in short", "quick answer", "one liner", "one-liner",
 })
 
 

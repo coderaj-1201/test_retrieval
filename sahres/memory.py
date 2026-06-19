@@ -120,6 +120,8 @@ _FOLLOWUP_PHRASES = (
     "bullet point", "shorter", "briefly", "simplify", "rephrase",
     "explain in", "in simple", "in points", "give me a summary",
     "make it shorter", "translate", "in one line", "one sentence",
+    "concise", "short answer", "brief answer", "short summary", "quick summary",
+    "in brief", "in short", "quick answer", "one liner", "one-liner",
 )
 # Bare pronouns that reference something from a prior turn.
 _PRONOUN_RE = re.compile(
@@ -127,7 +129,7 @@ _PRONOUN_RE = re.compile(
     re.IGNORECASE,
 )
 # Max chars of answer shown per turn in the context block.
-_SESSION_CONTEXT_ANSWER_CHARS = 150
+_SESSION_CONTEXT_ANSWER_CHARS = 800
 # Always include the last 3 turns — kept small to stay lean on tokens.
 # The classifier LLM now decides follow-up detection via is_followup;
 # we always provide a small window so it has enough context without
