@@ -80,6 +80,7 @@ class SynthesisInput:
     query:           str
     all_docs:        list   # list[SearchDocument] — avoid circular import with tools
     session_context: str = ""  # injected only for follow-up queries
+    ltm_context:     str = ""  # long-term user facts forwarded from orchestrator
 
 
 # ── Core pipeline models ───────────────────────────────────────────────────────
@@ -94,6 +95,7 @@ class OrchestratorRequest:
     user_id:         str
     question_id:     str = ""
     session_context: str = ""  # forwarded to synthesis for follow-up queries
+    ltm_context:     str = ""  # forwarded to synthesis for long-term user facts
 
 
 @dataclass

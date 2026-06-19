@@ -285,9 +285,11 @@ async def synthesize_answer(inp: SynthesisInput) -> tuple[str, float, list[Sourc
     context = "\n\n".join(capped_parts)
 
     session_context = inp.session_context
+    ltm_context     = inp.ltm_context
+    memory_block    = "\n\n".join(filter(None, [ltm_context, session_context]))
     user_content = (
-        f"{session_context}\n\nContext:\n{context}\n\nQuestion: {query}"
-        if session_context else
+        f"{memory_block}\n\nContext:\n{context}\n\nQuestion: {query}"
+        if memory_block else
         f"Context:\n{context}\n\nQuestion: {query}"
     )
 
@@ -425,6 +427,7 @@ async def retrieval_workflow(request: OrchestratorRequest) -> RetrievalResult:
         query=request.query,
         all_docs=all_docs,
         session_context=request.session_context,
+        ltm_context=request.ltm_context,
     ))
 
     logger.info(

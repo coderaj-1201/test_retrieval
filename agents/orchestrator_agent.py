@@ -440,7 +440,7 @@ def _merge_retrieval_results(
     import dataclasses
     return dataclasses.replace(
         base,
-        sources=merged_sources[:5],
+        sources=merged_sources[:8],
         confidence=max(primary.confidence, secondary.confidence),
     )
 
@@ -548,6 +548,7 @@ async def orchestrator_workflow(inp: OrchestratorInput) -> FinalResponse:
             attempt=attempt, conversation_id=user_query.conversation_id,
             user_id=user_query.user_id, question_id=user_query.question_id,
             session_context=session_context,
+            ltm_context=ltm_context,
         )
 
         if is_cross_domain and secondary_domain:
@@ -556,6 +557,7 @@ async def orchestrator_workflow(inp: OrchestratorInput) -> FinalResponse:
                 attempt=attempt, conversation_id=user_query.conversation_id,
                 user_id=user_query.user_id, question_id=user_query.question_id,
                 session_context=session_context,
+                ltm_context=ltm_context,
             )
             primary_result, secondary_result = await asyncio.gather(
                 _call_retrieval_safe(primary_req),
