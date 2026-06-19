@@ -445,11 +445,36 @@ async def messages(request: Request) -> Response:
     activity    = Activity().deserialize(body)
     auth_header = request.headers.get("Authorization", "")
 
+    # For Universal Actions invokes we capture the response ourselves so we are
+    # not dependent on the adapter's internal invoke-response capture mechanism,
+    # which varies across CloudAdapter versions and has been the source of
+    # cards not closing after feedback submission.
+    _invoke_result: list[tuple[int, object]] = []  # [(status, body)]
+
     async def turn_handler(turn_context: TurnContext) -> None:
-        await BOT.on_turn(turn_context)
+        if (
+            turn_context.activity.type == ActivityTypes.invoke
+            and turn_context.activity.name == "adaptiveCard/action"
+        ):
+            ir = await BOT._handle_adaptive_card_invoke(turn_context)
+            _invoke_result.append((ir.status, ir.body))
+            # Also propagate through the adapter so turn_state is consistent.
+            await turn_context.send_activity(
+                Activity(value=ir, type=ActivityTypes.invoke_response)
+            )
+        else:
+            await BOT.on_turn(turn_context)
 
     try:
         invoke_response = await ADAPTER.process_activity(auth_header, activity, turn_handler)
+
+        # Use our directly captured response when available — guarantees the
+        # card-replacement JSON is returned even if the adapter's capture path
+        # returns None or a 501 stub.
+        if _invoke_result:
+            status, body_content = _invoke_result[0]
+            return JSONResponse(status_code=status, content=body_content)
+
         if invoke_response:
             return JSONResponse(
                 status_code=invoke_response.status,
