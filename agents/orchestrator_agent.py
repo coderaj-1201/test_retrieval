@@ -139,17 +139,17 @@ each time — never reuse the same exact wording across different questions or
 session — tone depends on response_type:
 
 - "greeting": warm and welcoming, never apologetic or about "scope" — just greet
-  back naturally and briefly mention you can help with HR, IT, Legal, or Ops
-  topics. Do NOT say anything is "out of scope" or that you "can't help" — there
+  back naturally and briefly mention you can help with Operations questions.
+  Do NOT say anything is "out of scope" or that you "can't help" — there
   was nothing to decline.
-- "general": friendly, briefly explain what you can help with (HR, IT, Legal,
-  Ops topics) in your own words each time.
+- "general": friendly, briefly explain what you can help with (Operations topics
+  such as playbooks, procedures, SOPs, event rules, and SLAs) in your own words each time.
 - "clarify": professional, reference the likely prior topic from the memory
   context and ask the user to confirm or rephrase, e.g. "Did you mean to follow
   up on <prior topic>? Could you rephrase that in context?"
 - "decline": professional and polite, note that the specific topic they asked
   about (name it) isn't something you can help with, then redirect them toward
-  enterprise topics (HR, IT, Legal, Ops) you can help with instead. Do not be
+  Operations topics you can help with instead. Do not be
   preachy or repeat the same phrasing as previous declines.
 
 Keep deflection_message to 1-3 sentences in all cases. Never use a fixed
@@ -281,10 +281,10 @@ async def classify_query(inp: ClassifyInput) -> ClassifyResult:
             # fixed string by varying on response_type.
             response_type = (raw.get("response_type") or "decline").lower()
             _FALLBACKS = {
-                "greeting": "Hi there! I'm IRONMAN AI Assistant — happy to help with HR, IT, Legal, or Ops questions.",
-                "general":  "I can help answer questions about HR, IT, Legal, and Operations topics — what would you like to know?",
-                "clarify":  "Could you clarify what you'd like to follow up on? I can help with HR, IT, Legal, or Ops topics.",
-                "decline":  "That's outside what I can help with — I'm focused on enterprise topics like HR, IT, Legal, and Ops. Anything in those areas I can help with?",
+                "greeting": "Hi there! I'm IRONMAN AI Assistant — happy to help with your Operations questions.",
+                "general":  "I can help with Operations topics such as playbooks, procedures, SOPs, event rules, and SLAs — what would you like to know?",
+                "clarify":  "Could you clarify what you'd like to follow up on? I'm here to help with Operations questions.",
+                "decline":  "That's outside what I can help with — I'm focused on Operations topics. Is there anything in that area I can assist with?",
             }
             deflection_message = _FALLBACKS.get(response_type, _FALLBACKS["decline"])
         logger.info(

@@ -518,10 +518,10 @@ async def retrieve(raw: Request) -> Response:
     tool_val   = body.get("tool")
 
     try:
-        domain = Domain(domain_val) if domain_val else Domain.IT
+        domain = Domain(domain_val) if domain_val else Domain.OPS
     except ValueError:
-        logger.warning("unknown_domain_in_request value='%s' defaulting=it", domain_val)
-        domain = Domain.IT
+        logger.warning("unknown_domain_in_request value='%s' defaulting=ops", domain_val)
+        domain = Domain.OPS
 
     try:
         tool = RetrievalTool(tool_val) if tool_val else RetrievalTool.HYBRID
