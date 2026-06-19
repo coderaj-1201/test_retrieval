@@ -201,8 +201,6 @@ class IronmanBot(ActivityHandler):
                 reply = "Thanks for sharing! I'm a text-based assistant, so I can't read images. Feel free to type your question and I'll be happy to help."
             elif any("gif" in ct.lower() or "giphy" in ct.lower() for ct in content_types):
                 reply = "Ha, nice GIF! 😄 I'm a text-based assistant though — type your question and I'll get right on it."
-            elif any(ct.startswith("video/") or ct.startswith("audio/") for ct in content_types):
-                reply = "I'm not able to process audio or video files. Type your question and I'll do my best to help!"
             elif attachments:
                 reply = "I'm not able to open attachments, but I'd love to help — just type your question and I'll look into it."
             else:
