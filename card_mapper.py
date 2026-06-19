@@ -260,10 +260,10 @@ def build_feedback_card(agent_response: dict) -> dict:
                 "placeholder": placeholder, "isMultiline": True, "maxLength": 500,
             }],
             "actions": [{
-                "type": "Action.Submit",
+                "type": "Action.Execute",
                 "title": "Submit",
-                "data": {**_fb, "action": "feedback", "feedback": feedback_type},
-                "msTeams": {"feedback": {"hide": True}},
+                "verb": "submit_feedback",
+                "data": {**_fb, "feedback": feedback_type},
             }]
         }
 
