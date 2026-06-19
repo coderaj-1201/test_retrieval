@@ -235,7 +235,14 @@ def build_answer_card(agent_response: dict) -> dict:
 
 
 def build_feedback_card(agent_response: dict) -> dict:
-    """Separate small card with just 👍 👎 feedback actions."""
+    """Separate small card with 👍 👎 buttons and an optional comment field.
+
+    All interactive elements live at the root card level so Action.Execute
+    fires at root scope — Teams then replaces the entire card via the invoke
+    response without showing an 'Edited' label or a feedback banner.
+    (Nesting Action.Execute inside Action.ShowCard prevents root-card
+    replacement and leaves the comment box open permanently.)
+    """
     question_id     = agent_response.get("question_id")
     answer_id       = agent_response.get("answer_id")
     conversation_id = agent_response.get("conversation_id")
@@ -250,36 +257,36 @@ def build_feedback_card(agent_response: dict) -> dict:
         "domain":          domain,
     }
 
-    def _show_card(feedback_type: str) -> dict:
-        placeholder = "Add a comment (optional)" if feedback_type == "positive" \
-                      else "What could be improved? (optional)"
-        return {
-            "type": "AdaptiveCard",
-            "body": [{
-                "type": "Input.Text", "id": "feedback_comment",
-                "placeholder": placeholder, "isMultiline": True, "maxLength": 500,
-            }],
-            "actions": [{
-                "type": "Action.Execute",
-                "title": "Submit",
-                "verb": "submit_feedback",
-                "data": {**_fb, "feedback": feedback_type},
-            }]
-        }
-
     return {
         "contentType": "application/vnd.microsoft.card.adaptive",
         "content": {
             "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
             "type": "AdaptiveCard",
             "version": "1.4",
-            "body": [{
-                "type": "TextBlock", "text": "Was this helpful?",
-                "size": "Small", "isSubtle": True, "spacing": "None",
-            }],
+            "body": [
+                {
+                    "type": "TextBlock", "text": "Was this helpful?",
+                    "size": "Small", "isSubtle": True, "spacing": "None",
+                },
+                {
+                    "type": "Input.Text", "id": "feedback_comment",
+                    "placeholder": "Add a comment (optional)",
+                    "isMultiline": True, "maxLength": 500,
+                },
+            ],
             "actions": [
-                {"type": "Action.ShowCard", "title": "👍", "card": _show_card("positive")},
-                {"type": "Action.ShowCard", "title": "👎", "card": _show_card("negative")},
+                {
+                    "type": "Action.Execute",
+                    "title": "👍 Helpful",
+                    "verb": "submit_feedback",
+                    "data": {**_fb, "feedback": "positive"},
+                },
+                {
+                    "type": "Action.Execute",
+                    "title": "👎 Not helpful",
+                    "verb": "submit_feedback",
+                    "data": {**_fb, "feedback": "negative"},
+                },
             ],
         },
     }
