@@ -167,6 +167,56 @@ _REWRITE_SYSTEM = (
     "Return ONLY the rewritten query string, no explanation."
 )
 
+# Phrases that signal the user wants to reformat/condense the PRIOR answer,
+# not search for new information. When detected together with is_followup=True
+# we bypass retrieval and reformat directly from session context.
+_REFORMAT_VERBS = frozenset({
+    "summarize", "summary", "shorter", "briefly", "simplify", "rephrase",
+    "bullet point", "bullet points", "in 10 words", "in 5 words", "in one line",
+    "one sentence", "in points", "give me a summary", "make it shorter",
+    "tl;dr", "tldr", "condense", "shorten", "explain in simple",
+})
+
+
+def _is_reformat_command(text: str) -> bool:
+    t = text.strip().lower()
+    return any(phrase in t for phrase in _REFORMAT_VERBS)
+
+
+async def _reformat_prior_answer(instruction: str, session_context: str) -> str:
+    """Reformat the most recent prior answer using the user's instruction.
+
+    Called instead of retrieval when the classifier marks the query as a
+    follow-up AND it matches a reformat verb — e.g. "summarize it",
+    "in bullet points", "give me a shorter version".
+    """
+    @llm_retry
+    def _call():
+        return get_openai_client().chat.completions.create(
+            model=settings.AZURE_OPENAI_CHAT_DEPLOYMENT,
+            messages=[
+                {"role": "system", "content": (
+                    "You are a helpful assistant. The user wants you to reformat or "
+                    "condense the most recent answer in the conversation history. "
+                    "Apply the user's instruction to that answer exactly — do not "
+                    "introduce new information or search for anything new. "
+                    "Return only the reformatted content."
+                )},
+                {"role": "user", "content": (
+                    f"{session_context}\n\nInstruction: {instruction}"
+                )},
+            ],
+            temperature=0,
+            max_tokens=500,
+        )
+
+    try:
+        resp = await asyncio.to_thread(_call)
+        return resp.choices[0].message.content.strip()
+    except Exception as exc:
+        logger.warning("reformat_prior_answer_failed instruction=%.60s: %s", instruction, exc)
+        return ""
+
 
 async def _rewrite_query_if_needed(query: str, session_context: str, is_followup: bool) -> str:
     """
@@ -518,6 +568,36 @@ async def orchestrator_workflow(inp: OrchestratorInput) -> FinalResponse:
             "cross_domain_fanout primary=%s secondary=%s confidence=%.2f",
             domain, secondary_domain, domain_confidence,
         )
+
+    # Reformat shortcut: user asked to condense/reformat the prior answer.
+    # Bypass retrieval entirely — the prior answer already lives in session_context.
+    # Without this, the rewriter expands "it"/"that" to a topic keyword, retrieval
+    # fetches fresh documents, and synthesis writes a brand-new answer instead of
+    # condensing the one the user is pointing at.
+    if (
+        classification.is_followup
+        and session_context
+        and _is_reformat_command(user_query.text)
+    ):
+        logger.info("reformat_shortcut_activated query=%.60s", user_query.text)
+        reformatted = await _reformat_prior_answer(user_query.text, session_context)
+        if reformatted:
+            return FinalResponse(
+                status="success",
+                answer=reformatted,
+                domain=domain,
+                sources=[],
+                confidence=1.0,
+                attempts_used=0,
+                conversation_id=user_query.conversation_id,
+                user_id=user_query.user_id,
+                question_id=user_query.question_id,
+                tools_used=[],
+                show_citations=False,
+                citations=[],
+            )
+        # LLM call failed — fall through to normal retrieval as a safety net
+        logger.warning("reformat_shortcut_fallthrough — proceeding with retrieval")
 
     last_result: RetrievalResult | None = None
     tools_tried: list[str] = []
