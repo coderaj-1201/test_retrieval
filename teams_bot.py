@@ -194,7 +194,21 @@ class IronmanBot(ActivityHandler):
         user_text = _sanitise_user_text(raw_text)
 
         if not user_text:
-            await turn_context.send_activity("Please send a message.")
+            # Give a context-aware, friendly reply based on what was actually sent.
+            attachments = activity.attachments or []
+            content_types = [a.content_type or "" for a in attachments]
+            if any(ct.startswith("image/") or ct == "application/vnd.microsoft.teams.file.download.info" for ct in content_types):
+                reply = "Thanks for sharing! I'm a text-based assistant, so I can't read images. Feel free to type your question and I'll be happy to help."
+            elif any("gif" in ct.lower() or "giphy" in ct.lower() for ct in content_types):
+                reply = "Ha, nice GIF! 😄 I'm a text-based assistant though — type your question and I'll get right on it."
+            elif any(ct.startswith("video/") or ct.startswith("audio/") for ct in content_types):
+                reply = "I'm not able to process audio or video files. Type your question and I'll do my best to help!"
+            elif attachments:
+                reply = "I'm not able to open attachments, but I'd love to help — just type your question and I'll look into it."
+            else:
+                # Emoji-only or whitespace-only message
+                reply = "Hi there! 👋 I'm here to help with your Operations questions — just type what you'd like to know."
+            await turn_context.send_activity(reply)
             return
 
         from_prop       = activity.from_property
