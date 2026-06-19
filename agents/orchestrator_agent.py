@@ -575,8 +575,7 @@ async def orchestrator_workflow(inp: OrchestratorInput) -> FinalResponse:
     # fetches fresh documents, and synthesis writes a brand-new answer instead of
     # condensing the one the user is pointing at.
     if (
-        classification.is_followup
-        and session_context
+        session_context
         and _is_reformat_command(user_query.text)
     ):
         logger.info("reformat_shortcut_activated query=%.60s", user_query.text)
