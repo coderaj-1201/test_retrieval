@@ -180,18 +180,6 @@ def _sanitise_user_text(text: str) -> str:
 
 class IronmanBot(ActivityHandler):
 
-    async def on_turn(self, turn_context: TurnContext) -> None:
-        # Silently drop message edits — Teams sends messageUpdate when a user
-        # edits a previously sent message, but re-processing it would duplicate
-        # bot responses and confuse the conversation flow.
-        if turn_context.activity.type == "messageUpdate":
-            logger.debug(
-                "teams_message_update_ignored conversation=%.40s",
-                turn_context.activity.conversation.id if turn_context.activity.conversation else "",
-            )
-            return
-        await super().on_turn(turn_context)
-
     async def on_message_activity(self, turn_context: TurnContext) -> None:
         if turn_context.activity.value and isinstance(turn_context.activity.value, dict):
             await self._handle_card_action(turn_context)
