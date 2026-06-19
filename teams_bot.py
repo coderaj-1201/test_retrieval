@@ -194,7 +194,29 @@ class IronmanBot(ActivityHandler):
         user_text = _sanitise_user_text(raw_text)
 
         if not user_text:
-            await turn_context.send_activity("Please send a message.")
+            empty_card = {
+                "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                "type": "AdaptiveCard",
+                "version": "1.4",
+                "body": [{
+                    "type": "Container",
+                    "style": "warning",
+                    "items": [{
+                        "type": "TextBlock",
+                        "text": "⚠️ Please type a message before sending.",
+                        "wrap": True,
+                        "size": "Small",
+                        "weight": "Bolder",
+                    }],
+                }],
+            }
+            await turn_context.send_activity(Activity(
+                type=ActivityTypes.message,
+                attachments=[Attachment(
+                    content_type="application/vnd.microsoft.card.adaptive",
+                    content=empty_card,
+                )],
+            ))
             return
 
         from_prop       = activity.from_property
