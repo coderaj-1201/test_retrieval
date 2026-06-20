@@ -385,7 +385,7 @@ def run(base_url: str, user_id: str) -> None:
 
             tool_str = ",".join(tools) if tools else "—"
             print(f"  {tag}  status={status}  conf={conf:.2f}  domain={domain}  tools=[{tool_str}]")
-            print(f"  {DIM}A: {answer[:250].replace(chr(10), ' ')}{RST}")
+            print(f"  {DIM}A: {answer.replace(chr(10), ' ')}{RST}")
             if issues:
                 for iss in issues:
                     print(f"  {R}✗ {iss}{RST}")
@@ -397,8 +397,8 @@ def run(base_url: str, user_id: str) -> None:
                 "domain": domain,
                 "tools":  tools,
                 "issues": issues,
-                "q":      turn.question[:300],
-                "a":      answer[:500],
+                "q":      turn.question,
+                "a":      answer,
             })
 
         except Exception as exc:
@@ -408,7 +408,7 @@ def run(base_url: str, user_id: str) -> None:
                 "turn":   turn.label,
                 "status": "exception",
                 "issues": [str(exc)],
-                "q":      turn.question[:300],
+                "q":      turn.question,
                 "a":      "",
             })
 
