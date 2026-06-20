@@ -9,9 +9,9 @@ python-dotenv==1.0.1
 
 httpx==0.28.1
 
-botbuilder-core==4.16.1
-botbuilder-integration-aiohttp==4.16.1
-botbuilder-schema==4.16.1
+# botbuilder-* removed from local-run branch — Teams bot not needed to test
+# the three RAG agent servers. Install separately if you need teams_bot.py:
+#   pip install botbuilder-core==4.16.1 botbuilder-integration-aiohttp==4.16.1 botbuilder-schema==4.16.1
 
 # LLM + embeddings — Mistral AI via OpenAI-compatible SDK
 openai==1.109.1
