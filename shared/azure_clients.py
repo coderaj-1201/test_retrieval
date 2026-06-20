@@ -15,7 +15,7 @@ from azure.core.credentials import AzureKeyCredential
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from azure.search.documents import SearchClient
 from azure.search.documents.indexes import SearchIndexClient
-from openai import AzureOpenAI
+from openai import OpenAI
 
 from shared.config import settings
 
@@ -35,26 +35,22 @@ def get_foundry_client() -> AIProjectClient:
 
 
 @lru_cache(maxsize=1)
-def get_openai_client() -> AzureOpenAI:
+def get_openai_client() -> OpenAI:
     endpoint = str(settings.AZURE_OPENAI_ENDPOINT).rstrip("/")
     if settings.AZURE_OPENAI_API_KEY:
         logger.info("openai_auth=api_key endpoint=%s", endpoint)
-        return AzureOpenAI(
-            azure_endpoint = endpoint,
-            api_key        = settings.AZURE_OPENAI_API_KEY.get_secret_value(),
-            api_version    = settings.AZURE_OPENAI_API_VERSION,
-            max_retries    = 0,
-            timeout        = 30.0,
+        return OpenAI(
+            base_url    = endpoint,
+            api_key     = settings.AZURE_OPENAI_API_KEY.get_secret_value(),
         )
     logger.info("openai_auth=managed_identity endpoint=%s", endpoint)
     token_provider = get_bearer_token_provider(
         _credential(),
-        "https://cognitiveservices.azure.com/.default",
+        "https://ai.azure.com/.default",
     )
-    return AzureOpenAI(
-        azure_endpoint          = endpoint,
-        azure_ad_token_provider = token_provider,
-        api_version             = settings.AZURE_OPENAI_API_VERSION,
+    return OpenAI(
+        base_url    = endpoint,
+        api_key     = token_provider(),
         max_retries = 0,
         timeout     = 30.0,
     )
