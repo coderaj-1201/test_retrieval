@@ -43,4 +43,10 @@ WHOLE_CHAT_PHRASES: frozenset[str] = frozenset({
     "recap our conversation", "give me a recap", "session summary",
     "chat summary", "conversation summary", "what were my questions",
     "list my questions", "what have i asked",
+    # Cross-session recall variants
+    "what topics did we cover", "what enterprise topics", "topics did we discuss",
+    "topics did i ask", "what have we discussed", "what did we go through",
+    "what questions did i ask", "what did i ask about", "what did we cover",
+    "topics covered", "topics we covered", "summary of today", "what we covered today",
+    "topics from this conversation", "topics from today",
 })
