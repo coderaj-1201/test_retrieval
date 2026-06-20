@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 import uuid
@@ -431,7 +432,8 @@ def run(base_url: str, user_id: str) -> None:
             print(f"  {r['turn']}: {', '.join(r['issues'])}")
         print()
 
-    out = "scripts/ironman_ops_results.json"
+    here = os.path.dirname(os.path.abspath(__file__))
+    out  = os.path.join(here, "ironman_ops_results.json")
     with open(out, "w", encoding="utf-8") as f:
         json.dump({"conv_id": conv_id, "user_id": user_id, "results": results}, f, indent=2, ensure_ascii=False)
     print(f"Results saved → {out}\n")
