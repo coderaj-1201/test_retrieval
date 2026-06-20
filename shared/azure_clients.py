@@ -1,77 +1,60 @@
 """
-Azure client factories — managed identity only.
+Local AI client factory — Mistral AI via OpenAI-compatible SDK.
 
-All Azure service access uses DefaultAzureCredential.
-No API keys are accepted or used anywhere in this module.
+Replaces azure_clients.py for local development. Uses the standard `openai`
+Python package pointed at the Mistral API endpoint, so all existing call sites
+(chat completions, embeddings) work without change.
 
-In Azure Container Apps the managed identity is automatically available to the
-process — no credential configuration needed beyond assigning the identity the
-correct RBAC roles:
-  OpenAI   : Cognitive Services OpenAI User
-  Search   : Search Index Data Reader (+ Contributor for index management)
-  Cosmos   : Cosmos DB Built-in Data Contributor
-  Foundry  : Azure AI Developer
+Azure Search / Foundry clients are stubbed — they are not used in local mode
+(hybrid_search_tool.py is replaced by local_search.py on this branch).
 """
 from __future__ import annotations
 
 import logging
 from functools import lru_cache
 
-from azure.ai.projects import AIProjectClient
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-from azure.search.documents import SearchClient
-from azure.search.documents.indexes import SearchIndexClient
-from openai import AzureOpenAI
+from openai import OpenAI
 
 from shared.config import settings
 
 logger = logging.getLogger(__name__)
 
 
-def _credential() -> DefaultAzureCredential:
-    return DefaultAzureCredential()
-
-
 @lru_cache(maxsize=1)
-def get_foundry_client() -> AIProjectClient:
-    return AIProjectClient(
-        endpoint   = str(settings.AZURE_FOUNDRY_PROJECT_ENDPOINT),
-        credential = _credential(),
+def get_openai_client() -> OpenAI:
+    """
+    Return an OpenAI-compatible client pointing to Mistral AI.
+
+    The openai SDK is fully compatible with Mistral's v1 endpoint, so all
+    chat-completion and embedding calls work without code changes.
+    """
+    logger.info(
+        "mistral_client_init base_url=%s model=%s",
+        settings.MISTRAL_BASE_URL, settings.MISTRAL_CHAT_MODEL,
+    )
+    return OpenAI(
+        api_key=settings.MISTRAL_API_KEY.get_secret_value(),
+        base_url=settings.MISTRAL_BASE_URL,
+        max_retries=0,   # tenacity owns retries
+        timeout=60.0,
     )
 
 
-@lru_cache(maxsize=1)
-def get_openai_client() -> AzureOpenAI:
-    endpoint = str(settings.AZURE_OPENAI_ENDPOINT).rstrip("/")
-    logger.info("openai_auth=managed_identity endpoint=%s", endpoint)
-    token_provider = get_bearer_token_provider(
-        _credential(),
-        "https://cognitiveservices.azure.com/.default",
-    )
-    return AzureOpenAI(
-        azure_endpoint          = endpoint,
-        azure_ad_token_provider = token_provider,
-        api_version             = settings.AZURE_OPENAI_API_VERSION,
-        # max_retries=0: tenacity owns retries; SDK default of 2 would
-        # multiply attempts (2 × tenacity 3 = 6 calls).
-        max_retries = 0,
-        timeout     = 30.0,
+# ── Stubs for symbols imported by other shared modules ────────────────────────
+# These are never called in local mode but must exist so imports don't fail.
+
+def get_foundry_client():
+    raise NotImplementedError("Azure AI Foundry is not available in local-run mode.")
+
+
+def get_search_client():
+    raise NotImplementedError(
+        "Azure AI Search is not available in local-run mode. "
+        "Use local_search.py (ChromaDB) instead."
     )
 
 
-@lru_cache(maxsize=1)
-def get_search_client() -> SearchClient:
-    logger.info("search_auth=managed_identity")
-    return SearchClient(
-        endpoint    = str(settings.AZURE_SEARCH_ENDPOINT),
-        index_name  = settings.AZURE_SEARCH_INDEX,
-        credential  = _credential(),
-    )
-
-
-@lru_cache(maxsize=1)
-def get_search_index_client() -> SearchIndexClient:
-    return SearchIndexClient(
-        endpoint   = str(settings.AZURE_SEARCH_ENDPOINT),
-        credential = _credential(),
+def get_search_index_client():
+    raise NotImplementedError(
+        "Azure AI Search index client is not available in local-run mode."
     )

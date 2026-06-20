@@ -1,208 +1,240 @@
 """
-Cosmos DB client factory + container accessors.
+SQLite-backed drop-in replacement for cosmos_client.py.
 
-All authentication uses DefaultAzureCredential (managed identity).
-The managed identity must be assigned the Cosmos DB Built-in Data Contributor
-role on the Cosmos account.
+Exposes the same public API as the Cosmos version so no agent or memory code
+needs to change:
+  get_chat_container()     → SQLiteContainer("chat_history")
+  get_feedback_container() → SQLiteContainer("feedback")
+  get_sessions_container() → SQLiteContainer("sessions")
+  get_ltm_container()      → SQLiteContainer("long_term_memory")
+  upsert_document(container, doc)
+  get_document(container, item_id, partition_key)
+  query_documents(container, query, params, partition_key=None)
+  probe_cosmos()
 
-No connection strings or account keys are used or accepted.
+Each "container" is a single SQLite table with columns:
+  id TEXT PRIMARY KEY, partition_key TEXT, data TEXT (JSON blob)
 
-Partition key layout (must match provisioned Cosmos containers):
-  chat-history     → /conversation_id
-  feedback         → /question_id
-  sessions         → /conversation_id
-  long-term-memory → /user_id
+Cosmos SQL queries are NOT translated — instead query_documents() does a
+full table scan, deserializes each row, and filters in Python. This is fine
+for local dev volumes (hundreds of records, not millions).
 """
 from __future__ import annotations
 
+import json
 import logging
+import os
+import sqlite3
 from functools import lru_cache
-
-from azure.cosmos import CosmosClient, ContainerProxy, exceptions as cosmos_exc
-from azure.identity import DefaultAzureCredential
+from pathlib import Path
+from threading import Lock
 
 from shared.config import settings
 
 logger = logging.getLogger(__name__)
 
+# One global lock keeps multi-threaded FastAPI workers from corrupting the DB.
+_db_lock = Lock()
 
-# ── Client factory ─────────────────────────────────────────────────────────────
+
+# ── SQLite container proxy ─────────────────────────────────────────────────────
+
+class SQLiteContainer:
+    """Mimics azure.cosmos.ContainerProxy for local dev."""
+
+    def __init__(self, table_name: str) -> None:
+        self.id = table_name          # .id mirrors ContainerProxy.id used in logs
+        self._table = table_name
+        self._db_path = settings.SQLITE_DB_PATH
+        self._ensure_table()
+
+    # Called by probe_cosmos() to verify the container is accessible.
+    def read(self) -> dict:
+        return {"id": self.id}
+
+    def _conn(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self._db_path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _ensure_table(self) -> None:
+        Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
+        with _db_lock, self._conn() as conn:
+            conn.execute(f"""
+                CREATE TABLE IF NOT EXISTS "{self._table}" (
+                    id            TEXT PRIMARY KEY,
+                    partition_key TEXT,
+                    data          TEXT NOT NULL
+                )
+            """)
+            conn.execute(
+                f'CREATE INDEX IF NOT EXISTS idx_{self._table}_pk '
+                f'ON "{self._table}" (partition_key)'
+            )
+
+    def upsert_item(self, *, body: dict) -> dict:
+        """Insert or replace a document. 'id' field is required."""
+        doc_id = body.get("id", "")
+        pk     = body.get("conversation_id") or body.get("user_id") or body.get("question_id") or doc_id
+        with _db_lock, self._conn() as conn:
+            conn.execute(
+                f'INSERT OR REPLACE INTO "{self._table}" (id, partition_key, data) VALUES (?,?,?)',
+                (doc_id, pk, json.dumps(body)),
+            )
+        return body
+
+    def read_item(self, *, item: str, partition_key: str) -> dict:
+        """Return the document or raise KeyError if not found."""
+        with _db_lock, self._conn() as conn:
+            row = conn.execute(
+                f'SELECT data FROM "{self._table}" WHERE id = ?', (item,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"Document '{item}' not found in '{self._table}'")
+        return json.loads(row["data"])
+
+    def query_items(
+        self,
+        *,
+        query: str,
+        parameters: list[dict],
+        partition_key: str | None = None,
+        enable_cross_partition_query: bool = False,
+    ) -> list[dict]:
+        """
+        Full-table scan with Python-level filtering.
+
+        Cosmos SQL is not parsed — we load all rows (optionally scoped to a
+        partition) and filter using the @param values extracted from `parameters`.
+        Supports equality filters on top-level string fields only.
+        """
+        param_map = {p["name"]: p["value"] for p in parameters}
+
+        with _db_lock, self._conn() as conn:
+            if partition_key:
+                rows = conn.execute(
+                    f'SELECT data FROM "{self._table}" WHERE partition_key = ?',
+                    (partition_key,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    f'SELECT data FROM "{self._table}"'
+                ).fetchall()
+
+        docs = [json.loads(r["data"]) for r in rows]
+
+        # Simple filter: look for @param occurrences in the query string and
+        # match against the corresponding top-level document field.
+        for param_name, param_value in param_map.items():
+            if param_name == "@limit":
+                continue
+            # Strip the leading @ to get the field name used in the query.
+            # e.g. "@conv_id" matches "c.conversation_id = @conv_id"
+            # We search the query text for "c.<field> = @param_name" patterns.
+            field_name = _infer_field(query, param_name)
+            if field_name:
+                docs = [d for d in docs if str(d.get(field_name, "")) == str(param_value)]
+
+        # Apply LIMIT from @limit param if present.
+        limit = int(param_map.get("@limit", 1000))
+        return docs[:limit]
+
+    def delete_item(self, *, item: str, partition_key: str) -> None:
+        with _db_lock, self._conn() as conn:
+            conn.execute(f'DELETE FROM "{self._table}" WHERE id = ?', (item,))
+
+
+def _infer_field(query: str, param_name: str) -> str | None:
+    """
+    Extract the document field name for a given @param from a Cosmos SQL string.
+
+    Examples:
+      "c.conversation_id = @conv_id" + "@conv_id" → "conversation_id"
+      "c.user_id = @user_id"         + "@user_id" → "user_id"
+    """
+    import re
+    # Match "c.<field> = @param_name" or "c.<field> eq @param_name"
+    pattern = rf'c\.(\w+)\s+(?:=|eq)\s+{re.escape(param_name)}'
+    m = re.search(pattern, query, re.IGNORECASE)
+    return m.group(1) if m else None
+
+
+# ── Cached container accessors (mirrors cosmos_client.py public API) ──────────
 
 @lru_cache(maxsize=1)
-def get_cosmos_client() -> CosmosClient:
-    logger.info("cosmos_auth=managed_identity")
-    return CosmosClient(
-        url        = str(settings.COSMOS_ENDPOINT),
-        credential = DefaultAzureCredential(),
-    )
-
-
-# ── Database accessor — raises clearly if DB missing ──────────────────────────
-
-@lru_cache(maxsize=1)
-def _get_database():
-    client = get_cosmos_client()
-    try:
-        db = client.get_database_client(settings.COSMOS_DATABASE)
-        db.read()
-        return db
-    except cosmos_exc.CosmosResourceNotFoundError:
-        raise RuntimeError(
-            f"Cosmos database '{settings.COSMOS_DATABASE}' does not exist. "
-            "Run `python scripts/setup_cosmos.py` before deploying."
-        )
-    except Exception as exc:
-        raise RuntimeError(f"Failed to connect to Cosmos DB: {exc}") from exc
-
-
-# ── Container accessor ─────────────────────────────────────────────────────────
-
-def _get_container(container_name: str) -> ContainerProxy:
-    db = _get_database()
-    try:
-        container = db.get_container_client(container_name)
-        container.read()
-        return container
-    except cosmos_exc.CosmosResourceNotFoundError:
-        raise RuntimeError(
-            f"Cosmos container '{container_name}' does not exist in database "
-            f"'{settings.COSMOS_DATABASE}'. Run `python scripts/setup_cosmos.py`."
-        )
-
-
-# ── Public accessors (cached per process) ─────────────────────────────────────
-
-@lru_cache(maxsize=1)
-def get_chat_container() -> ContainerProxy:
-    return _get_container(settings.COSMOS_CONTAINER_CHAT)
+def get_chat_container() -> SQLiteContainer:
+    return SQLiteContainer(settings.COSMOS_CONTAINER_CHAT)
 
 
 @lru_cache(maxsize=1)
-def get_feedback_container() -> ContainerProxy:
-    return _get_container(settings.COSMOS_CONTAINER_FEEDBACK)
+def get_feedback_container() -> SQLiteContainer:
+    return SQLiteContainer(settings.COSMOS_CONTAINER_FEEDBACK)
 
 
 @lru_cache(maxsize=1)
-def get_sessions_container() -> ContainerProxy:
-    return _get_container(settings.COSMOS_CONTAINER_SESSIONS)
+def get_sessions_container() -> SQLiteContainer:
+    return SQLiteContainer(settings.COSMOS_CONTAINER_SESSIONS)
 
 
 @lru_cache(maxsize=1)
-def get_ltm_container() -> ContainerProxy:
-    return _get_container(settings.COSMOS_CONTAINER_LTM)
+def get_ltm_container() -> SQLiteContainer:
+    return SQLiteContainer(settings.COSMOS_CONTAINER_LTM)
 
 
 # ── Startup probe ──────────────────────────────────────────────────────────────
 
 def probe_cosmos() -> None:
-    """
-    Call once during app lifespan startup.
-    Forces container accessor caching and fails loudly if anything is misconfigured.
-    Also validates that the sessions container has TTL enabled at the container level.
-    """
+    """Verify all four SQLite tables are reachable. Logs clearly on failure."""
     for fn, label in [
         (get_chat_container,     settings.COSMOS_CONTAINER_CHAT),
         (get_feedback_container, settings.COSMOS_CONTAINER_FEEDBACK),
         (get_sessions_container, settings.COSMOS_CONTAINER_SESSIONS),
         (get_ltm_container,      settings.COSMOS_CONTAINER_LTM),
     ]:
-        fn()
-        logger.info("cosmos_probe_ok container=%s", label)
-
-    # Warn if TTL is not enabled on the sessions container — sessions will never expire.
-    try:
-        sessions_props = get_sessions_container().read()
-        ttl_setting = sessions_props.get("resource", {}).get("defaultTtl")
-        if ttl_setting is None:
-            logger.warning(
-                "cosmos_sessions_ttl_not_enabled: container '%s' has no defaultTtl. "
-                "Session documents will never expire. Enable TTL on the container.",
-                settings.COSMOS_CONTAINER_SESSIONS,
-            )
-        else:
-            logger.info("cosmos_sessions_ttl_ok default_ttl=%s", ttl_setting)
-    except Exception as exc:
-        logger.warning("cosmos_sessions_ttl_check_failed: %s", exc)
+        fn().read()
+        logger.info("sqlite_probe_ok table=%s db=%s", label, settings.SQLITE_DB_PATH)
 
 
-# ── Generic helpers ────────────────────────────────────────────────────────────
+# ── Generic helpers (same signatures as cosmos_client.py) ─────────────────────
 
-def upsert_document(container: ContainerProxy, doc: dict) -> None:
-    """
-    Fire-and-forget upsert. Logs on failure, never raises — a Cosmos write
-    failure must never take down a query response.
-    """
+def upsert_document(container: SQLiteContainer, doc: dict) -> None:
+    """Fire-and-forget upsert. Logs on failure, never raises."""
     try:
         container.upsert_item(body=doc)
-    except cosmos_exc.CosmosHttpResponseError as exc:
-        logger.error(
-            "cosmos_upsert_failed container=%s id=%s status=%s: %s",
-            container.id, doc.get("id"), exc.status_code, exc.message,
-        )
     except Exception as exc:
         logger.error(
-            "cosmos_upsert_unexpected container=%s id=%s: %s",
+            "sqlite_upsert_failed table=%s id=%s: %s",
             container.id, doc.get("id"), exc,
         )
 
 
-def get_document(container: ContainerProxy, item_id: str, partition_key: str) -> dict | None:
+def get_document(container: SQLiteContainer, item_id: str, partition_key: str) -> dict | None:
     try:
         return container.read_item(item=item_id, partition_key=partition_key)
-    except cosmos_exc.CosmosResourceNotFoundError:
-        return None
-    except cosmos_exc.CosmosHttpResponseError as exc:
-        logger.error(
-            "cosmos_read_failed container=%s id=%s status=%s: %s",
-            container.id, item_id, exc.status_code, exc.message,
-        )
+    except KeyError:
         return None
     except Exception as exc:
         logger.error(
-            "cosmos_read_unexpected container=%s id=%s: %s",
-            container.id, item_id, exc,
+            "sqlite_read_failed table=%s id=%s: %s", container.id, item_id, exc
         )
         return None
 
 
 def query_documents(
-    container: ContainerProxy,
+    container: SQLiteContainer,
     query: str,
     params: list[dict],
     partition_key: str | None = None,
 ) -> list[dict]:
-    """
-    Execute a parameterised Cosmos query.
-
-    Pass `partition_key` whenever the partition key value is known — this scopes
-    the query to a single partition and avoids expensive cross-partition fan-out.
-    Only omit `partition_key` for admin/analytics queries where a full scan is
-    intentional; those calls will emit a WARNING so they are visible in logs.
-    """
-    cross_partition = partition_key is None
-    if cross_partition:
-        logger.warning(
-            "cosmos_cross_partition_query container=%s query=%.80s "
-            "— pass partition_key to avoid full scan",
-            container.id, query,
-        )
+    """Execute a parameterised query (Python-level filtering of SQLite rows)."""
     try:
-        kwargs: dict = {"query": query, "parameters": params}
-        if cross_partition:
-            kwargs["enable_cross_partition_query"] = True
-        else:
-            kwargs["partition_key"] = partition_key
-
-        return list(container.query_items(**kwargs))
-    except cosmos_exc.CosmosHttpResponseError as exc:
-        logger.error(
-            "cosmos_query_failed container=%s status=%s query=%.80s: %s",
-            container.id, exc.status_code, query, exc.message,
+        return container.query_items(
+            query=query,
+            parameters=params,
+            partition_key=partition_key,
         )
-        return []
     except Exception as exc:
         logger.error(
-            "cosmos_query_unexpected container=%s query=%.80s: %s",
-            container.id, query, exc,
+            "sqlite_query_failed table=%s query=%.80s: %s", container.id, query, exc
         )
         return []

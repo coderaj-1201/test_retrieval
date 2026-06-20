@@ -35,22 +35,16 @@ import pytest
 _DUMMY_ENV = textwrap.dedent("""\
     ENVIRONMENT=development
 
-    AZURE_FOUNDRY_PROJECT_ENDPOINT=https://dummy.api.azureml.ms
-    AZURE_OPENAI_ENDPOINT=https://dummy.openai.azure.com/
-    AZURE_OPENAI_CHAT_DEPLOYMENT=gpt-41-mini
-    AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-large
-    AZURE_OPENAI_API_VERSION=2025-01-01-preview
+    # Mistral AI (local-run branch) — replace with a real key for actual LLM calls.
+    # Servers will start with a dummy key; LLM calls will fail but /health/live returns 200.
+    MISTRAL_API_KEY=dummy-mistral-key
+    MISTRAL_BASE_URL=https://api.mistral.ai/v1
+    MISTRAL_CHAT_MODEL=mistral-small-latest
+    MISTRAL_EMBEDDING_MODEL=mistral-embed
 
-    AZURE_SEARCH_ENDPOINT=https://dummy.search.windows.net
-    AZURE_SEARCH_INDEX=idx-rag
-    AZURE_SEARCH_SEMANTIC_CONFIG=rag-semantic-config
-
-    COSMOS_ENDPOINT=https://dummy.documents.azure.com:443/
-    COSMOS_DATABASE=dummy-db
-    COSMOS_CONTAINER_CHAT=chat-history
-    COSMOS_CONTAINER_FEEDBACK=feedback
-    COSMOS_CONTAINER_SESSIONS=sessions
-    COSMOS_CONTAINER_LTM=long-term-memory
+    LOCAL_SEARCH_DB_PATH=./local_data/chroma_test
+    LOCAL_SEARCH_COLLECTION=rag-documents
+    SQLITE_DB_PATH=./local_data/rag_test.db
 
     MAIN_AGENT_URL=http://localhost:8000
     ORCHESTRATOR_URL=http://localhost:8001
@@ -64,25 +58,16 @@ _DUMMY_ENV = textwrap.dedent("""\
     MICROSOFT_APP_TENANT_ID=dummy-tenant-id
     BOT_PORT=3978
 
-    AZURE_SERVICE_BUS_NAMESPACE=
-    SB_QUEUE_ESCALATION=escalation-requests
-
-    ZENDESK_SUBDOMAIN=
-    ZENDESK_API_TOKEN=
-    ZENDESK_USER_EMAIL=
-    ZENDESK_GROUP_ID_TICKET=
-    ZENDESK_GROUP_ID_SME=
-
-    CONFIDENCE_THRESHOLD=0.65
-    CITATION_CONFIDENCE_THRESHOLD=0.40
-    MAX_RETRIEVAL_ATTEMPTS=3
+    CONFIDENCE_THRESHOLD=0.30
+    CITATION_CONFIDENCE_THRESHOLD=0.20
+    MAX_RETRIEVAL_ATTEMPTS=2
     RETRIEVAL_TOP_K=5
     SYNTHESIS_TEMPERATURE=0.0
     MAX_QUERY_LENGTH=2000
     SYNTHESIS_MAX_CONTEXT_CHARS=12000
     SYNTHESIS_MAX_SOURCES=5
     SYNTHESIS_MAX_ANSWER_CHARS=10000
-    SYNTHESIS_MAX_TOKENS=6000
+    SYNTHESIS_MAX_TOKENS=4000
 
     SESSION_MAX_TURNS=10
     SESSION_TTL_SECONDS=604800
@@ -91,8 +76,8 @@ _DUMMY_ENV = textwrap.dedent("""\
     LTM_MAX_FACTS=10
 
     REDIS_URL=
-    RATE_LIMIT_RPM=20
-    RATE_LIMIT_BURST=5
+    RATE_LIMIT_RPM=60
+    RATE_LIMIT_BURST=10
 
     DOMAIN_CONFIDENCE_THRESHOLD=0.6
     ESCALATION_SLA_TICKET=4 business hours

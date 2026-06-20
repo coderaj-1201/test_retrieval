@@ -31,3 +31,6 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+local_data/chroma/
+local_data/*.db
+local_data/chroma_test/

@@ -72,32 +72,15 @@ def configure_logging() -> None:
     root.handlers.clear()
     root.addHandler(handler)
 
-    # Silence noisy Azure SDK loggers
-    for noisy in ("azure.core.pipeline", "azure.identity", "httpx", "httpcore"):
+    # Silence noisy SDK loggers.
+    for noisy in ("httpx", "httpcore", "chromadb", "openai"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
+    # Azure Monitor / App Insights not available in local-run mode.
     if settings.APPLICATIONINSIGHTS_CONNECTION_STRING:
-        try:
-            from azure.monitor.opentelemetry import configure_azure_monitor
-            configure_azure_monitor(
-                connection_string=settings.APPLICATIONINSIGHTS_CONNECTION_STRING,
-                # Disable default instrumentations that add noise in a bot context;
-                # keep only the ones that are useful for distributed tracing.
-                disable_offline_storage=False,
-            )
-            logging.getLogger(__name__).info(
-                "azure_monitor_configured connection_string_prefix=%s",
-                settings.APPLICATIONINSIGHTS_CONNECTION_STRING[:20],
-            )
-            # Initialise OTel metric instruments NOW — after the global meter
-            # provider has been replaced by configure_azure_monitor().
-            from shared.telemetry import setup_meters
-            setup_meters()
-        except ImportError:
-            logging.getLogger(__name__).warning(
-                "azure-monitor-opentelemetry not installed — skipping App Insights. "
-                "Add azure-monitor-opentelemetry to requirements.txt."
-            )
+        logging.getLogger(__name__).info(
+            "azure_monitor_skipped: local-run mode does not export to App Insights."
+        )
 
 
 def get_logger(name: str) -> logging.Logger:

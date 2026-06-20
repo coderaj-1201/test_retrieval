@@ -35,11 +35,8 @@ def _openai_transient_exceptions():
 
 
 def _search_transient_exceptions():
-    try:
-        from azure.core.exceptions import HttpResponseError, ServiceRequestError
-        return (HttpResponseError, ServiceRequestError)
-    except ImportError:
-        return (Exception,)
+    # In local-run mode there is no Azure Search SDK — fall back to base Exception.
+    return (Exception,)
 
 
 def llm_retry(func):
