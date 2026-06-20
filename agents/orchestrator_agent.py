@@ -1,17 +1,25 @@
 """
 Orchestrator Agent
 ==================
-Classifies query (domain + confidence + tool), runs retry loop with tool
-escalation. When domain confidence < DOMAIN_CONFIDENCE_THRESHOLD, fans out
-retrieval to both primary and secondary domains in parallel, merges by score.
+Classifies every incoming query and routes it through one of five paths:
 
-Phase-2 hardening:
+  1. domain=none / offensive      → firm equal-energy decline (no retrieval)
+  2. domain=none / greeting       → warm brief reply (streak NOT incremented)
+  3. domain=none / general        → brief capability reply
+  4. domain=none / decision_making→ acknowledge intent, info-only boundary
+  5. domain=none / clarify        → ask to rephrase
+  6. domain=none / decline        → polite redirect (streak reminder if >= 3)
+  7. in-domain + reformat command → condense LATEST answer only (no retrieval)
+  8. in-domain + whole-chat ask   → summarize ALL session turns (explicit count)
+  9. in-domain + normal           → rewrite if follow-up → AI Search → synthesize
+
+Phase-2 hardening retained:
   - LLM classification wrapped with @llm_retry
-  - Shared httpx.AsyncClient reused across requests (not created per call)
+  - Shared httpx.AsyncClient reused across requests
   - /health/live + /health/ready split for ACA probes
-  - H-9: classification failure returns error response (no silent OPS fallback)
+  - H-9: classification failure returns error response
   - InternalAuthMiddleware validates incoming requests from Main Agent
-  - X-Internal-Secret header added to all outbound Retrieval calls
+  - X-Internal-Secret header on all outbound Retrieval calls
   - CircuitBreaker on Retrieval agent calls
   - SIGTERM handler for graceful shutdown
 """
@@ -39,10 +47,21 @@ from shared.cosmos_client import probe_cosmos
 from shared.logging_config import bind_context, configure_logging, get_logger
 from shared.models import (
     ClassifyInput, DOMAIN_DESCRIPTIONS, Domain, FinalResponse, OrchestratorInput,
-    OrchestratorRequest, RetrievalResult, RetrievalTool, UserQuery,
+    OrchestratorRequest, RetrievalResult, RetrievalTool, SessionMemory, UserQuery,
 )
 from shared.retry import llm_retry
 from shared.telemetry import record_tool
+from prompts import (
+    CLASSIFY_SYSTEM,
+    CLASSIFY_FALLBACKS,
+    STREAK_REMINDER,
+    STREAK_REMINDER_FIRM,
+    REWRITE_SYSTEM,
+    REFORMAT_SYSTEM,
+    REFORMAT_VERBS,
+    WHOLE_CHAT_SUMMARY_SYSTEM,
+    WHOLE_CHAT_PHRASES,
+)
 import os
 from dotenv import load_dotenv
 load_dotenv()
@@ -54,206 +73,37 @@ _TOOL_LADDER   = [RetrievalTool.HYBRID, RetrievalTool.HYDE, RetrievalTool.DECOMP
 _RETRIEVAL_URL = os.getenv("RETRIEVAL_URL")
 _ALL_DOMAINS   = list(Domain)
 
-# Shared HTTP client — initialised in lifespan, reused across all requests.
-# Avoids creating a new TCP connection per LLM/agent call.
 _http: httpx.AsyncClient | None = None
-
-# Circuit breaker for the Retrieval agent.
 _retrieval_breaker = CircuitBreaker(name="retrieval-agent", fail_max=3, reset_timeout=30)
 
-
-def _build_classify_system() -> str:
-    """Build the classification system prompt dynamically from DOMAIN_DESCRIPTIONS.
-
-    Adding a new domain requires only updating the Domain enum and
-    DOMAIN_DESCRIPTIONS in shared/models.py — no prompt edits needed here.
-    """
-    domain_values = "|".join(d.value for d in Domain)
-    domain_lines  = "\n".join(
-        f"{d}={desc}" for d, desc in DOMAIN_DESCRIPTIONS.items()
-    )
-    return f"""Classify this enterprise query. You may be given prior session/long-term
-memory context above the question — use it to judge whether this question is a
-standalone query or a follow-up/continuation of an earlier turn.
-
-Return ONLY JSON:
-{{
-  "domain": "{domain_values}|none",
-  "domain_confidence": <0.0-1.0>,
-  "secondary_domain": "{domain_values}|none",
-  "tool": "hybrid|hyde|decomposition",
-  "is_followup": true|false,
-  "response_type": "greeting|general|clarify|decline",
-  "deflection_message": "<only when domain=none, see rules below>",
-  "reason": "brief"
-}}
-
-is_followup:
-Set true when the question only makes sense in the context of the prior turns shown above.
-This includes — but is NOT limited to — pronouns ("it", "they", "that"), short queries,
-and topic references that implicitly continue a prior discussion even without pronouns
-(e.g. "What about the approval process?" after discussing leave policy,
-"And the SLA?" after discussing a procedure, "Is it different for contractors?" after
-discussing an employee policy). Set false for fully standalone questions that need no
-prior context to answer.
-
-domain:
-{domain_lines}
-none=question is not related to any enterprise domain (general knowledge, personal, celebrity, sports, etc.) — this INCLUDES greetings and small talk, which are never a domain
-
-domain_confidence:
-0.9+=certain
-<0.6=ambiguous
-
-secondary_domain:
-best alternate domain if confidence is low, otherwise "none"
-
-tool:
-hybrid=direct, single factual questions (default)
-hyde=vague, conceptual, or exploratory questions where a hypothetical document helps
-decomposition=MUST be selected when the message contains multiple distinct questions or sub-tasks — look for conjunctions like "and", "also", "as well as", numbered lists, bullet items, or multiple "?" marks (e.g. "What is the SLA? And who approves the RCA?" → decomposition)
-
-If the question is not enterprise-related, set domain="none", domain_confidence=1.0, and
-decide response_type:
-
-- "greeting" — small talk: "hi", "hello", "how are you", "thanks", "bye", etc.
-- "general" — questions about the assistant itself: "what can you do?", "who are you?",
-  "help"
-- "clarify" — the question is short, ambiguous, or relies on pronouns/context
-  ("it", "that", "this one", "what about...") in a way that suggests it's a
-  follow-up to the previous turn in the memory context, rather than a genuinely
-  unrelated topic.
-- "decline" — the question is clearly unrelated to enterprise topics on its own
-  terms (celebrity trivia, sports scores, general knowledge, personal questions),
-  regardless of memory context.
-
-IMPORTANT — reformatting instructions: if the query is a command to reformat or
-condense a prior answer ("summarize", "in 10 words", "bullet points", "shorter",
-"simplify", "rephrase", "one sentence", etc.) AND the memory context shows a
-prior in-domain turn, do NOT set domain="none". Instead assign the same domain
-as the most recent prior turn and set is_followup=true. These are valid follow-up
-instructions, not out-of-scope queries.
-
-Write deflection_message as a short, NON-REPETITIVE message in your own words
-each time — never reuse the same exact wording across different questions or
-session — tone depends on response_type:
-
-- "greeting": warm and welcoming, never apologetic or about "scope" — just greet
-  back naturally and briefly mention you can help with Operations questions.
-  Do NOT say anything is "out of scope" or that you "can't help" — there
-  was nothing to decline.
-- "general": friendly, briefly explain what you can help with (Operations topics
-  such as playbooks, procedures, SOPs, event rules, and SLAs) in your own words each time.
-- "clarify": professional, reference the likely prior topic from the memory
-  context and ask the user to confirm or rephrase, e.g. "Did you mean to follow
-  up on <prior topic>? Could you rephrase that in context?"
-- "decline": professional and polite, note that the specific topic they asked
-  about (name it) isn't something you can help with, then redirect them toward
-  Operations topics you can help with instead. Do not be
-  preachy or repeat the same phrasing as previous declines.
-
-Keep deflection_message to 1-3 sentences in all cases. Never use a fixed
-template — tailor the wording to the actual question each time.
-"""
+# Response types that count as out-of-scope and increment the streak.
+_STREAK_INCREMENTING_TYPES = {"general", "decision_making", "offensive", "decline"}
+# Response types that are fine and do NOT touch the streak.
+_STREAK_EXEMPT_TYPES = {"greeting", "clarify"}
 
 
-_CLASSIFY_SYSTEM = _build_classify_system()
-
-_REWRITE_SYSTEM = (
-    "You are a query rewriter. The user's question is a follow-up that contains "
-    "pronouns or references to prior conversation turns. Rewrite it into a single, "
-    "self-contained search query that can be understood without any prior context. "
-    "Preserve the user's intent exactly — do not add new topics. "
-    "Return ONLY the rewritten query string, no explanation."
-)
-
-# Phrases that signal the user wants to reformat/condense the PRIOR answer,
-# not search for new information. When detected together with is_followup=True
-# we bypass retrieval and reformat directly from session context.
-_REFORMAT_VERBS = frozenset({
-    "summarize", "summary", "shorter", "briefly", "simplify", "rephrase",
-    "bullet point", "bullet points", "in 10 words", "in 5 words", "in one line",
-    "one sentence", "in points", "give me a summary", "make it shorter",
-    "tl;dr", "tldr", "condense", "shorten", "explain in simple",
-    "concise", "short answer", "brief answer", "short summary", "quick summary",
-    "in brief", "in short", "quick answer", "one liner", "one-liner",
-})
-
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _is_reformat_command(text: str) -> bool:
     t = text.strip().lower()
-    return any(phrase in t for phrase in _REFORMAT_VERBS)
+    return any(phrase in t for phrase in REFORMAT_VERBS)
 
 
-async def _reformat_prior_answer(instruction: str, session_context: str) -> str:
-    """Reformat the most recent prior answer using the user's instruction.
-
-    Called instead of retrieval when the classifier marks the query as a
-    follow-up AND it matches a reformat verb — e.g. "summarize it",
-    "in bullet points", "give me a shorter version".
-    """
-    @llm_retry
-    def _call():
-        return get_openai_client().chat.completions.create(
-            model=settings.AZURE_OPENAI_CHAT_DEPLOYMENT,
-            messages=[
-                {"role": "system", "content": (
-                    "You are a helpful assistant. The user wants you to reformat or "
-                    "condense the most recent answer in the conversation history. "
-                    "Apply the user's instruction to that answer exactly — do not "
-                    "introduce new information or search for anything new. "
-                    "Return only the reformatted content."
-                )},
-                {"role": "user", "content": (
-                    f"{session_context}\n\nInstruction: {instruction}"
-                )},
-            ],
-            temperature=0,
-            max_tokens=500,
-        )
-
-    try:
-        resp = await asyncio.to_thread(_call)
-        return resp.choices[0].message.content.strip()
-    except Exception as exc:
-        logger.warning("reformat_prior_answer_failed instruction=%.60s: %s", instruction, exc)
-        return ""
+def _is_whole_chat_summary(text: str) -> bool:
+    t = text.strip().lower()
+    return any(phrase in t for phrase in WHOLE_CHAT_PHRASES)
 
 
-async def _rewrite_query_if_needed(query: str, session_context: str, is_followup: bool) -> str:
-    """
-    Rewrites the query into a standalone searchable form when the classifier
-    flagged it as a follow-up. Vector search always receives the rewritten
-    query; synthesis receives both so it can frame the answer in context.
-    """
-    if not is_followup or not session_context:
-        return query
-
-    @llm_retry
-    def _call():
-        return get_openai_client().chat.completions.create(
-            model=settings.AZURE_OPENAI_CHAT_DEPLOYMENT,
-            messages=[
-                {"role": "system", "content": _REWRITE_SYSTEM},
-                {"role": "user",   "content": f"{session_context}\n\nFollow-up question: {query}"},
-            ],
-            temperature=0,
-            max_tokens=120,
-        )
-
-    try:
-        resp = await asyncio.to_thread(_call)
-        rewritten = resp.choices[0].message.content.strip().strip('"')
-        if rewritten:
-            logger.info("query_rewritten original=%.60s rewritten=%.60s", query, rewritten)
-            return rewritten
-    except Exception as exc:
-        logger.warning("query_rewrite_failed query=%.60s: %s", query, exc)
-    return query
+def _apply_streak_reminder(message: str, streak: int) -> str:
+    """Append a purpose reminder to deflection messages when streak is high."""
+    if streak >= 6:
+        return message + STREAK_REMINDER_FIRM
+    if streak >= 3:
+        return message + STREAK_REMINDER
+    return message
 
 
 def _internal_headers() -> dict[str, str]:
-    """Return auth headers for outbound internal calls."""
     secret = (
         settings.INTERNAL_API_SECRET.get_secret_value()
         if settings.INTERNAL_API_SECRET is not None
@@ -262,10 +112,12 @@ def _internal_headers() -> dict[str, str]:
     return {"X-Internal-Secret": secret} if secret else {}
 
 
+# ── Classification result ─────────────────────────────────────────────────────
+
 class ClassifyResult:
     __slots__ = (
         "domain", "domain_confidence", "secondary_domain", "tool", "failed",
-        "out_of_scope", "deflection_message", "is_followup",
+        "out_of_scope", "deflection_message", "is_followup", "response_type",
     )
 
     def __init__(
@@ -278,6 +130,7 @@ class ClassifyResult:
         out_of_scope: bool = False,
         deflection_message: str = "",
         is_followup: bool = False,
+        response_type: str = "decline",
     ) -> None:
         self.domain              = domain
         self.domain_confidence   = domain_confidence
@@ -287,7 +140,10 @@ class ClassifyResult:
         self.out_of_scope        = out_of_scope
         self.deflection_message  = deflection_message
         self.is_followup         = is_followup
+        self.response_type       = response_type
 
+
+# ── Classify step ─────────────────────────────────────────────────────────────
 
 @step
 async def classify_query(inp: ClassifyInput) -> ClassifyResult:
@@ -301,14 +157,14 @@ async def classify_query(inp: ClassifyInput) -> ClassifyResult:
     @llm_retry
     def _call_llm():
         return get_openai_client().chat.completions.create(
-            model=settings.AZURE_OPENAI_CHAT_DEPLOYMENT,
-            messages=[
-                {"role": "system", "content": _CLASSIFY_SYSTEM},
+            model           = settings.AZURE_OPENAI_CHAT_DEPLOYMENT,
+            messages        = [
+                {"role": "system", "content": CLASSIFY_SYSTEM},
                 {"role": "user",   "content": user_content},
             ],
-            temperature=0,
-            max_tokens=300,
-            response_format={"type": "json_object"},
+            temperature     = 0,
+            max_tokens      = 300,
+            response_format = {"type": "json_object"},
         )
 
     try:
@@ -323,29 +179,25 @@ async def classify_query(inp: ClassifyInput) -> ClassifyResult:
         return ClassifyResult(None, 0.0, None, RetrievalTool.HYBRID, failed=True)
 
     domain_raw = (raw.get("domain") or "").lower()
-
-    # LLM signalled that the question is outside enterprise scope.
     _OUT_OF_SCOPE = {"none", "general", "out_of_scope", "unknown", "other", ""}
+
     if domain_raw in _OUT_OF_SCOPE:
+        response_type      = (raw.get("response_type") or "decline").lower()
         deflection_message = str(raw.get("deflection_message") or "").strip()
         if not deflection_message:
-            # Fallback only if the model omitted it — still avoid a single
-            # fixed string by varying on response_type.
-            response_type = (raw.get("response_type") or "decline").lower()
-            _FALLBACKS = {
-                "greeting": "Hi there! I'm IRONMAN AI Assistant — happy to help with your Operations questions.",
-                "general":  "I can help with Operations topics such as playbooks, procedures, SOPs, event rules, and SLAs — what would you like to know?",
-                "clarify":  "Could you clarify what you'd like to follow up on? I'm here to help with Operations questions.",
-                "decline":  "That's outside what I can help with — I'm focused on Operations topics. Is there anything in that area I can assist with?",
-            }
-            deflection_message = _FALLBACKS.get(response_type, _FALLBACKS["decline"])
+            deflection_message = CLASSIFY_FALLBACKS.get(
+                response_type, CLASSIFY_FALLBACKS["decline"]
+            )
         logger.info(
-            "classify_out_of_scope query_preview=%.60s domain_raw='%s' response_type=%s",
-            inp.query, domain_raw, raw.get("response_type"),
+            "classify_out_of_scope query_preview=%.60s response_type=%s",
+            inp.query, response_type,
         )
         return ClassifyResult(
             None, 0.0, None, RetrievalTool.HYBRID,
-            failed=True, out_of_scope=True, deflection_message=deflection_message,
+            failed        = False,
+            out_of_scope  = True,
+            deflection_message = deflection_message,
+            response_type = response_type,
         )
 
     try:
@@ -380,11 +232,142 @@ async def classify_query(inp: ClassifyInput) -> ClassifyResult:
     is_followup = bool(raw.get("is_followup", False))
 
     logger.info(
-        "classify_complete domain=%s confidence=%.2f secondary=%s tool=%s is_followup=%s reason='%s'",
-        domain, domain_confidence, secondary_domain or "none", tool, is_followup, raw.get("reason", ""),
+        "classify_complete domain=%s confidence=%.2f secondary=%s tool=%s "
+        "is_followup=%s reason='%s'",
+        domain, domain_confidence, secondary_domain or "none", tool,
+        is_followup, raw.get("reason", ""),
     )
-    return ClassifyResult(domain, domain_confidence, secondary_domain, tool, is_followup=is_followup)
+    return ClassifyResult(
+        domain, domain_confidence, secondary_domain, tool,
+        is_followup   = is_followup,
+        response_type = "in_domain",
+    )
 
+
+# ── LLM action helpers ────────────────────────────────────────────────────────
+
+async def _reformat_prior_answer(instruction: str, session_context: str) -> str:
+    """
+    Condense or reformat ONLY the most recent answer using the user's instruction.
+    Bypasses retrieval entirely — the prior answer is already in session_context.
+    """
+    @llm_retry
+    def _call():
+        return get_openai_client().chat.completions.create(
+            model    = settings.AZURE_OPENAI_CHAT_DEPLOYMENT,
+            messages = [
+                {"role": "system", "content": REFORMAT_SYSTEM},
+                {"role": "user",   "content": f"{session_context}\n\nInstruction: {instruction}"},
+            ],
+            temperature = 0,
+            max_tokens  = 500,
+        )
+
+    try:
+        resp = await asyncio.to_thread(_call)
+        return resp.choices[0].message.content.strip()
+    except Exception as exc:
+        logger.warning(
+            "reformat_prior_answer_failed instruction=%.60s: %s", instruction, exc
+        )
+        return ""
+
+
+async def _summarize_whole_chat(
+    session: SessionMemory,
+    turn_texts: dict[str, dict[str, str]],
+) -> str:
+    """
+    Summarize ALL turns held in the session context window.
+    Returns a message that leads with an explicit count statement so the user
+    knows exactly how many questions were covered.
+
+    turn_texts is keyed by question_id and contains {"question": ..., "answer": ...}.
+    Fetched by main_agent before calling the orchestrator and passed via OrchestratorInput.
+    """
+
+    available_turns = [
+        t for t in session.turns
+        if t.question_id in turn_texts
+    ]
+    count = len(available_turns)
+
+    if count == 0:
+        return (
+            "I don't have any previous questions from this session on record to summarize."
+        )
+
+    numbered = "\n\n".join(
+        f"{i+1}. Q: {turn_texts[t.question_id]['question']}\n"
+        f"   A: {turn_texts[t.question_id]['answer']}"
+        for i, t in enumerate(available_turns)
+    )
+
+    if count < settings.SESSION_MAX_TURNS:
+        preamble = (
+            f"Summarizing {count} question(s) from this session "
+            f"({count} on record, fewer than the {settings.SESSION_MAX_TURNS} maximum):"
+        )
+    else:
+        preamble = f"Summarizing your last {count} questions from this session:"
+
+    @llm_retry
+    def _call():
+        return get_openai_client().chat.completions.create(
+            model    = settings.AZURE_OPENAI_CHAT_DEPLOYMENT,
+            messages = [
+                {"role": "system", "content": WHOLE_CHAT_SUMMARY_SYSTEM},
+                {"role": "user",   "content": numbered},
+            ],
+            temperature = 0,
+            max_tokens  = 600,
+        )
+
+    try:
+        resp    = await asyncio.to_thread(_call)
+        summary = resp.choices[0].message.content.strip()
+        return f"{preamble}\n\n{summary}"
+    except Exception as exc:
+        logger.warning("whole_chat_summary_failed: %s", exc)
+        return (
+            f"{preamble}\n\n"
+            "I wasn't able to generate a summary right now. Please try again."
+        )
+
+
+async def _rewrite_query_if_needed(
+    query: str, session_context: str, is_followup: bool
+) -> str:
+    """Rewrite a follow-up query into a standalone search string."""
+    if not is_followup or not session_context:
+        return query
+
+    @llm_retry
+    def _call():
+        return get_openai_client().chat.completions.create(
+            model    = settings.AZURE_OPENAI_CHAT_DEPLOYMENT,
+            messages = [
+                {"role": "system", "content": REWRITE_SYSTEM},
+                {"role": "user",   "content": f"{session_context}\n\nFollow-up question: {query}"},
+            ],
+            temperature = 0,
+            max_tokens  = 120,
+        )
+
+    try:
+        resp      = await asyncio.to_thread(_call)
+        rewritten = resp.choices[0].message.content.strip().strip('"')
+        if rewritten:
+            logger.info(
+                "query_rewritten original=%.60s rewritten=%.60s", query, rewritten
+            )
+            return rewritten
+    except Exception as exc:
+        logger.warning("query_rewrite_failed query=%.60s: %s", query, exc)
+    return query
+
+
+# ── Retrieval helpers ─────────────────────────────────────────────────────────
 
 async def _call_retrieval(req: OrchestratorRequest) -> RetrievalResult:
     global _http
@@ -397,38 +380,39 @@ async def _call_retrieval(req: OrchestratorRequest) -> RetrievalResult:
         "user_id":         req.user_id,
         "question_id":     req.question_id,
     }
-    client = _http or httpx.AsyncClient(timeout=60.0)
+    client  = _http or httpx.AsyncClient(timeout=60.0)
     headers = {**_internal_headers(), "X-Request-ID": req.question_id}
-    resp = await client.post(
-        f"{_RETRIEVAL_URL}/retrieve",
-        json=payload,
-        headers=headers,
+    resp    = await client.post(
+        f"{_RETRIEVAL_URL}/retrieve", json=payload, headers=headers
     )
     resp.raise_for_status()
     data = resp.json()
+
     domain_val = data.get("domain", "")
     try:
         domain = Domain(domain_val) if domain_val else req.domain
     except ValueError:
         domain = req.domain
+
     tool_val = data.get("tool", "")
     try:
         tool = RetrievalTool(tool_val) if tool_val else req.tool
     except ValueError:
         tool = req.tool
+
     return RetrievalResult(
-        query=data.get("query", req.query),
-        domain=domain,
-        tool=tool,
-        attempt=data.get("attempt", req.attempt),
-        answer=data.get("answer", ""),
-        confidence=float(data.get("confidence", 0.0)),
-        sources=data.get("sources", []),
-        conversation_id=data.get("conversation_id", req.conversation_id),
-        user_id=data.get("user_id", req.user_id),
-        question_id=data.get("question_id", req.question_id),
-        show_citations=bool(data.get("show_citations", False)),
-        citations=data.get("citations", []),
+        query           = data.get("query", req.query),
+        domain          = domain,
+        tool            = tool,
+        attempt         = data.get("attempt", req.attempt),
+        answer          = data.get("answer", ""),
+        confidence      = float(data.get("confidence", 0.0)),
+        sources         = data.get("sources", []),
+        conversation_id = data.get("conversation_id", req.conversation_id),
+        user_id         = data.get("user_id", req.user_id),
+        question_id     = data.get("question_id", req.question_id),
+        show_citations  = bool(data.get("show_citations", False)),
+        citations       = data.get("citations", []),
     )
 
 
@@ -443,18 +427,25 @@ async def call_retrieval(req: OrchestratorRequest) -> RetrievalResult:
         )
         raise
     except httpx.TimeoutException:
-        logger.error("retrieval_timeout attempt=%d domain=%s tool=%s", req.attempt, req.domain, req.tool)
+        logger.error(
+            "retrieval_timeout attempt=%d domain=%s tool=%s",
+            req.attempt, req.domain, req.tool,
+        )
         raise
     except httpx.HTTPStatusError as exc:
-        logger.error("retrieval_http_error status=%d attempt=%d", exc.response.status_code, req.attempt)
+        logger.error(
+            "retrieval_http_error status=%d attempt=%d",
+            exc.response.status_code, req.attempt,
+        )
         raise
     except Exception as exc:
-        logger.error("retrieval_unexpected_error attempt=%d: %s", req.attempt, exc, exc_info=True)
+        logger.error(
+            "retrieval_unexpected_error attempt=%d: %s", req.attempt, exc, exc_info=True
+        )
         raise
 
 
 async def _call_retrieval_safe(req: OrchestratorRequest) -> RetrievalResult | None:
-    """call_retrieval with exception swallowed — used in parallel fan-out."""
     try:
         return await call_retrieval(req)
     except Exception as exc:
@@ -463,8 +454,7 @@ async def _call_retrieval_safe(req: OrchestratorRequest) -> RetrievalResult | No
 
 
 def _merge_retrieval_results(
-    primary: RetrievalResult,
-    secondary: RetrievalResult | None,
+    primary: RetrievalResult, secondary: RetrievalResult | None
 ) -> RetrievalResult:
     if secondary is None:
         return primary
@@ -473,7 +463,7 @@ def _merge_retrieval_results(
     other = secondary if base is primary else primary
 
     seen_titles: set[str] = set()
-    merged_sources: list[dict] = []
+    merged: list[dict] = []
     for src in sorted(
         base.sources + other.sources,
         key=lambda s: s.get("relevance", 0.0),
@@ -482,81 +472,95 @@ def _merge_retrieval_results(
         t = src.get("title", "")
         if t not in seen_titles:
             seen_titles.add(t)
-            merged_sources.append(src)
+            merged.append(src)
 
     logger.info(
         "fanout_merge primary_conf=%.3f secondary_conf=%.3f merged_sources=%d",
-        primary.confidence, secondary.confidence, len(merged_sources),
+        primary.confidence, secondary.confidence, len(merged),
     )
-
     import dataclasses
     return dataclasses.replace(
         base,
-        sources=merged_sources[:8],
-        confidence=max(primary.confidence, secondary.confidence),
+        sources    = merged[:8],
+        confidence = max(primary.confidence, secondary.confidence),
     )
 
+
+# ── Main workflow ─────────────────────────────────────────────────────────────
 
 @workflow(name="orchestrator_workflow")
 async def orchestrator_workflow(inp: OrchestratorInput) -> FinalResponse:
     user_query      = inp.user_query
     session_context = inp.session_context
     ltm_context     = inp.ltm_context
+    session         = inp.session          # SessionMemory passed from main_agent
+    turn_texts      = inp.turn_texts       # pre-fetched {question_id: {question, answer}}
 
     bind_context(
-        agent="orchestrator",
-        conversation_id=user_query.conversation_id,
-        user_id=user_query.user_id,
-        question_id=user_query.question_id,
+        agent           = "orchestrator",
+        conversation_id = user_query.conversation_id,
+        user_id         = user_query.user_id,
+        question_id     = user_query.question_id,
     )
     logger.info("orchestrator_started query_preview=%.80s", user_query.text)
 
     classification = await classify_query(ClassifyInput(
-        query=user_query.text,
-        session_context=session_context,
-        ltm_context=ltm_context,
+        query           = user_query.text,
+        session_context = session_context,
+        ltm_context     = ltm_context,
     ))
 
-    # Out-of-scope: question is not enterprise-related (e.g. celebrity trivia).
-    # Return a polite deflection rather than an error or silent fallback.
+    # ── H-9: hard classification failure ─────────────────────────────────────
+    if classification.failed:
+        logger.error("classify_failed_returning_error query_preview=%.60s", user_query.text)
+        return FinalResponse(
+            status          = "error",
+            answer          = "I wasn't able to process your query. Please rephrase and try again.",
+            domain          = None,
+            sources         = [],
+            confidence      = 0.0,
+            attempts_used   = 0,
+            conversation_id = user_query.conversation_id,
+            user_id         = user_query.user_id,
+            question_id     = user_query.question_id,
+            tools_used      = [],
+            show_citations  = False,
+            citations       = [],
+        )
+
+    # ── Path A: domain = none (all out-of-scope variants) ────────────────────
     if classification.out_of_scope:
-        logger.info("classify_out_of_scope_deflect query_preview=%.60s", user_query.text)
-        return FinalResponse(
-            status="out_of_scope",
-            answer=classification.deflection_message,
-            domain=None,
-            sources=[],
-            confidence=1.0,
-            attempts_used=0,
-            conversation_id=user_query.conversation_id,
-            user_id=user_query.user_id,
-            question_id=user_query.question_id,
-            tools_used=[],
-            show_citations=False,
-            citations=[],
+        response_type = classification.response_type
+        message       = classification.deflection_message
+        streak        = session.off_topic_streak if session else 0
+
+        logger.info(
+            "classify_out_of_scope response_type=%s streak=%d query_preview=%.60s",
+            response_type, streak, user_query.text,
         )
 
-    # H-9: if classification failed entirely (LLM/parse error), return an error.
-    if classification.failed or classification.domain is None:
-        logger.error(
-            "classify_failed_returning_error query_preview=%.60s",
-            user_query.text,
-        )
+        # Greetings are fine — no streak increment, no reminder appended.
+        # For all other out-of-scope types, append a reminder if streak is high.
+        if response_type not in _STREAK_EXEMPT_TYPES:
+            message = _apply_streak_reminder(message, streak)
+
         return FinalResponse(
-            status="error",
-            answer="I wasn't able to process your query. Please rephrase and try again.",
-            domain=None,
-            sources=[],
-            confidence=0.0,
-            attempts_used=0,
-            conversation_id=user_query.conversation_id,
-            user_id=user_query.user_id,
-            question_id=user_query.question_id,
-            tools_used=[],
-            show_citations=False,
-            citations=[],
+            status          = "out_of_scope",
+            answer          = message,
+            domain          = None,
+            sources         = [],
+            confidence      = 1.0,
+            attempts_used   = 0,
+            conversation_id = user_query.conversation_id,
+            user_id         = user_query.user_id,
+            question_id     = user_query.question_id,
+            tools_used      = [],
+            show_citations  = False,
+            citations       = [],
+            response_type   = response_type,
         )
 
+    # ── In-domain paths ───────────────────────────────────────────────────────
     domain            = classification.domain
     secondary_domain  = classification.secondary_domain
     domain_confidence = classification.domain_confidence
@@ -571,46 +575,61 @@ async def orchestrator_workflow(inp: OrchestratorInput) -> FinalResponse:
             domain, secondary_domain, domain_confidence,
         )
 
-    # Reformat shortcut: user asked to condense/reformat the prior answer.
-    # Bypass retrieval entirely — the prior answer already lives in session_context.
-    # Without this, the rewriter expands "it"/"that" to a topic keyword, retrieval
-    # fetches fresh documents, and synthesis writes a brand-new answer instead of
-    # condensing the one the user is pointing at.
-    if (
-        session_context
-        and _is_reformat_command(user_query.text)
-    ):
+    # ── Path B: reformat latest answer (no retrieval) ─────────────────────────
+    # Checked BEFORE whole-chat summary because "summarize" alone (without
+    # "our chat" / "this session" etc.) targets only the latest answer.
+    if session_context and _is_reformat_command(user_query.text) and not _is_whole_chat_summary(user_query.text):
         logger.info("reformat_shortcut_activated query=%.60s", user_query.text)
         reformatted = await _reformat_prior_answer(user_query.text, session_context)
         if reformatted:
             return FinalResponse(
-                status="success",
-                answer=reformatted,
-                domain=domain,
-                sources=[],
-                confidence=1.0,
-                attempts_used=0,
-                conversation_id=user_query.conversation_id,
-                user_id=user_query.user_id,
-                question_id=user_query.question_id,
-                tools_used=[],
-                show_citations=False,
-                citations=[],
+                status          = "success",
+                answer          = reformatted,
+                domain          = domain,
+                sources         = [],
+                confidence      = 1.0,
+                attempts_used   = 0,
+                conversation_id = user_query.conversation_id,
+                user_id         = user_query.user_id,
+                question_id     = user_query.question_id,
+                tools_used      = [],
+                show_citations  = False,
+                citations       = [],
             )
-        # LLM call failed — fall through to normal retrieval as a safety net
         logger.warning("reformat_shortcut_fallthrough — proceeding with retrieval")
 
-    last_result: RetrievalResult | None = None
-    tools_tried: list[str] = []
+    # ── Path C: whole-chat summary ────────────────────────────────────────────
+    if _is_whole_chat_summary(user_query.text):
+        logger.info("whole_chat_summary_activated query=%.60s", user_query.text)
+        if session and turn_texts is not None:
+            summary_answer = await _summarize_whole_chat(session, turn_texts)
+        else:
+            summary_answer = (
+                "I don't have session context available to summarize this conversation."
+            )
+        return FinalResponse(
+            status          = "success",
+            answer          = summary_answer,
+            domain          = domain,
+            sources         = [],
+            confidence      = 1.0,
+            attempts_used   = 0,
+            conversation_id = user_query.conversation_id,
+            user_id         = user_query.user_id,
+            question_id     = user_query.question_id,
+            tools_used      = [],
+            show_citations  = False,
+            citations       = [],
+        )
 
-    # Rewrite once before the retry loop — the rewritten query is used for all
-    # vector search attempts; session_context is forwarded to synthesis so the
-    # LLM can frame follow-up answers correctly.
-    # is_followup comes from the classifier LLM, which catches topic-reference
-    # follow-ups that the old pronoun/phrase heuristic missed.
+    # ── Path D: normal retrieval ──────────────────────────────────────────────
+    # Rewrite once before the retry loop.
     search_query = await _rewrite_query_if_needed(
         user_query.text, session_context, classification.is_followup
     )
+
+    last_result: RetrievalResult | None = None
+    tools_tried: list[str] = []
 
     for attempt_idx in range(settings.MAX_RETRIEVAL_ATTEMPTS):
         idx     = min(attempt_idx, len(_TOOL_LADDER) - 1)
@@ -625,20 +644,28 @@ async def orchestrator_workflow(inp: OrchestratorInput) -> FinalResponse:
         record_tool(tool=tool.value, domain=domain.value)
 
         primary_req = OrchestratorRequest(
-            query=search_query, domain=domain, tool=tool,
-            attempt=attempt, conversation_id=user_query.conversation_id,
-            user_id=user_query.user_id, question_id=user_query.question_id,
-            session_context=session_context,
-            ltm_context=ltm_context,
+            query           = search_query,
+            domain          = domain,
+            tool            = tool,
+            attempt         = attempt,
+            conversation_id = user_query.conversation_id,
+            user_id         = user_query.user_id,
+            question_id     = user_query.question_id,
+            session_context = session_context,
+            ltm_context     = ltm_context,
         )
 
         if is_cross_domain and secondary_domain:
             secondary_req = OrchestratorRequest(
-                query=search_query, domain=secondary_domain, tool=tool,
-                attempt=attempt, conversation_id=user_query.conversation_id,
-                user_id=user_query.user_id, question_id=user_query.question_id,
-                session_context=session_context,
-                ltm_context=ltm_context,
+                query           = search_query,
+                domain          = secondary_domain,
+                tool            = tool,
+                attempt         = attempt,
+                conversation_id = user_query.conversation_id,
+                user_id         = user_query.user_id,
+                question_id     = user_query.question_id,
+                session_context = session_context,
+                ltm_context     = ltm_context,
             )
             primary_result, secondary_result = await asyncio.gather(
                 _call_retrieval_safe(primary_req),
@@ -656,18 +683,17 @@ async def orchestrator_workflow(inp: OrchestratorInput) -> FinalResponse:
             try:
                 result = await call_retrieval(primary_req)
             except CircuitOpenError:
-                # Circuit is open — no point retrying; return fast failure
                 return FinalResponse(
-                    status="error",
-                    answer="Retrieval service is temporarily unavailable. Please try again shortly.",
-                    domain=domain,
-                    sources=[],
-                    confidence=0.0,
-                    attempts_used=attempt,
-                    conversation_id=user_query.conversation_id,
-                    user_id=user_query.user_id,
-                    question_id=user_query.question_id,
-                    tools_used=tools_tried,
+                    status          = "error",
+                    answer          = "Retrieval service is temporarily unavailable. Please try again shortly.",
+                    domain          = domain,
+                    sources         = [],
+                    confidence      = 0.0,
+                    attempts_used   = attempt,
+                    conversation_id = user_query.conversation_id,
+                    user_id         = user_query.user_id,
+                    question_id     = user_query.question_id,
+                    tools_used      = tools_tried,
                 )
             except Exception as exc:
                 logger.error("retrieval_failed attempt=%d: %s", attempt, exc)
@@ -685,18 +711,18 @@ async def orchestrator_workflow(inp: OrchestratorInput) -> FinalResponse:
                 attempt, result.confidence,
             )
             return FinalResponse(
-                status="success",
-                answer=result.answer,
-                domain=domain,
-                sources=result.sources,
-                confidence=result.confidence,
-                attempts_used=attempt,
-                conversation_id=user_query.conversation_id,
-                user_id=user_query.user_id,
-                question_id=user_query.question_id,
-                tools_used=tools_tried,
-                show_citations=result.show_citations,
-                citations=result.citations,
+                status          = "success",
+                answer          = result.answer,
+                domain          = domain,
+                sources         = result.sources,
+                confidence      = result.confidence,
+                attempts_used   = attempt,
+                conversation_id = user_query.conversation_id,
+                user_id         = user_query.user_id,
+                question_id     = user_query.question_id,
+                tools_used      = tools_tried,
+                show_citations  = result.show_citations,
+                citations       = result.citations,
             )
 
         logger.warning(
@@ -705,22 +731,21 @@ async def orchestrator_workflow(inp: OrchestratorInput) -> FinalResponse:
         )
 
     logger.error(
-        "orchestrator_failed all_attempts=%d exhausted",
-        settings.MAX_RETRIEVAL_ATTEMPTS,
+        "orchestrator_failed all_attempts=%d exhausted", settings.MAX_RETRIEVAL_ATTEMPTS
     )
     return FinalResponse(
-        status="failure",
-        answer=last_result.answer if last_result else "",
-        domain=domain,
-        sources=last_result.sources if last_result else [],
-        confidence=last_result.confidence if last_result else 0.0,
-        attempts_used=settings.MAX_RETRIEVAL_ATTEMPTS,
-        conversation_id=user_query.conversation_id,
-        user_id=user_query.user_id,
-        question_id=user_query.question_id,
-        show_citations=last_result.show_citations if last_result else False,
-        citations=last_result.citations if last_result else [],
-        tools_used=tools_tried,
+        status          = "failure",
+        answer          = last_result.answer if last_result else "",
+        domain          = domain,
+        sources         = last_result.sources if last_result else [],
+        confidence      = last_result.confidence if last_result else 0.0,
+        attempts_used   = settings.MAX_RETRIEVAL_ATTEMPTS,
+        conversation_id = user_query.conversation_id,
+        user_id         = user_query.user_id,
+        question_id     = user_query.question_id,
+        show_citations  = last_result.show_citations if last_result else False,
+        citations       = last_result.citations if last_result else [],
+        tools_used      = tools_tried,
     )
 
 
@@ -731,8 +756,8 @@ async def lifespan(_app: FastAPI):
     global _http
     _register_sigterm()
     _http = httpx.AsyncClient(
-        timeout=httpx.Timeout(connect=5.0, read=60.0, write=10.0, pool=5.0),
-        limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
+        timeout = httpx.Timeout(connect=5.0, read=60.0, write=10.0, pool=5.0),
+        limits  = httpx.Limits(max_connections=50, max_keepalive_connections=20),
     )
     await asyncio.to_thread(probe_cosmos)
     logger.info("orchestrator_agent_started environment=%s", settings.ENVIRONMENT)
@@ -769,21 +794,19 @@ async def readiness() -> Response:
         checks["cosmos"] = f"error: {type(exc).__name__}"
         overall_ok = False
 
-    # Include circuit breaker state in readiness so ACA can remove the
-    # replica from rotation when the retrieval agent is consistently failing.
     cb_state = _retrieval_breaker.to_dict()
     checks["retrieval_circuit"] = cb_state["state"]
     if cb_state["state"] == "open":
         overall_ok = False
 
     return Response(
-        content=json.dumps({
+        content    = json.dumps({
             "status": "ready" if overall_ok else "degraded",
             "agent":  "orchestrator",
             "checks": checks,
         }),
-        media_type="application/json",
-        status_code=200 if overall_ok else 503,
+        media_type = "application/json",
+        status_code = 200 if overall_ok else 503,
     )
 
 
@@ -799,51 +822,57 @@ async def orchestrate(raw: Request) -> Response:
     ltm_ctx     = body.pop("ltm_context", "")
 
     user_query = UserQuery(
-        text=body.get("text", ""),
-        conversation_id=body.get("conversation_id", ""),
-        user_id=body.get("user_id", ""),
-        question_id=body.get("question_id", ""),
+        text            = body.get("text", ""),
+        conversation_id = body.get("conversation_id", ""),
+        user_id         = body.get("user_id", ""),
+        question_id     = body.get("question_id", ""),
     )
     bind_context(
-        agent="orchestrator",
-        conversation_id=user_query.conversation_id,
-        user_id=user_query.user_id,
-        question_id=user_query.question_id,
+        agent           = "orchestrator",
+        conversation_id = user_query.conversation_id,
+        user_id         = user_query.user_id,
+        question_id     = user_query.question_id,
     )
 
     try:
         result_obj = await orchestrator_workflow.run(OrchestratorInput(
-            user_query=user_query,
-            session_context=session_ctx,
-            ltm_context=ltm_ctx,
+            user_query      = user_query,
+            session_context = session_ctx,
+            ltm_context     = ltm_ctx,
+            session         = None,
+            turn_texts      = None,
         ))
         outputs = result_obj.get_outputs()
         final: FinalResponse = outputs[0] if outputs else FinalResponse(
-            status="failure", answer="", domain=None,
-            conversation_id=user_query.conversation_id,
-            user_id=user_query.user_id,
-            question_id=user_query.question_id,
+            status          = "failure",
+            answer          = "",
+            domain          = None,
+            conversation_id = user_query.conversation_id,
+            user_id         = user_query.user_id,
+            question_id     = user_query.question_id,
         )
     except Exception as exc:
         logger.error("orchestrate_endpoint_error: %s", exc, exc_info=True)
         final = FinalResponse(
-            status="error", answer="", domain=None,
-            conversation_id=user_query.conversation_id,
-            user_id=user_query.user_id,
-            question_id=user_query.question_id,
+            status          = "error",
+            answer          = "",
+            domain          = None,
+            conversation_id = user_query.conversation_id,
+            user_id         = user_query.user_id,
+            question_id     = user_query.question_id,
         )
 
     return Response(
-        content=json.dumps(final.to_dict()),
-        media_type="application/json",
+        content    = json.dumps(final.to_dict()),
+        media_type = "application/json",
     )
 
 
 if __name__ == "__main__":
     uvicorn.run(
         "agents.orchestrator_agent:app",
-        host="0.0.0.0",
-        port=8001,
-        reload=False,
-        timeout_graceful_shutdown=60,
+        host    = "0.0.0.0",
+        port    = 8001,
+        reload  = False,
+        timeout_graceful_shutdown = 60,
     )

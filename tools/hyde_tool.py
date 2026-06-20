@@ -9,6 +9,7 @@ import logging
 
 from shared.azure_clients import get_openai_client
 from shared.config import settings
+from prompts import HYDE_SYSTEM
 
 logger = logging.getLogger(__name__)
 
@@ -22,16 +23,8 @@ def generate_hypothetical_document(query: str) -> str:
     response = client.chat.completions.create(
         model=settings.AZURE_OPENAI_CHAT_DEPLOYMENT,
         messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are a knowledgeable enterprise assistant. "
-                    "Write a concise, factual passage (3-5 sentences) that directly answers the question below. "
-                    "Do not add caveats, disclaimers, or 'I'. "
-                    "Write as if this text would appear in an internal policy document."
-                ),
-            },
-            {"role": "user", "content": f"Question: {query}"},
+            {"role": "system", "content": HYDE_SYSTEM},
+            {"role": "user",   "content": f"Question: {query}"},
         ],
         temperature=0.4,
         max_tokens=300,

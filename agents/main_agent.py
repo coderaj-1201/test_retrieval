@@ -42,7 +42,7 @@ from shared.escalation_client import (
 )
 from shared.logging_config import bind_context, configure_logging, get_logger
 from shared.memory import (
-    append_turn, format_ltm_context, format_session_context,
+    append_turn, fetch_turn_texts, format_ltm_context, format_session_context,
     load_ltm, load_session, update_ltm,
 )
 from shared.models import (
@@ -384,11 +384,23 @@ async def main_agent_workflow(user_query: UserQuery) -> QueryResponse:
     session = await load_session(user_query.conversation_id, user_query.user_id)
     ltm     = await load_ltm(user_query.user_id)
 
+    # Fetch turn texts for the last SESSION_CONTEXT_TURNS turns so the
+    # orchestrator has text for: classifier context, reformat, whole-chat summary.
+    # We always fetch for the most recent 3 turns (context window);
+    # for whole-chat summary the orchestrator also needs all remaining turns,
+    # so we fetch the full window eagerly here.
+    all_question_ids = [t.question_id for t in session.turns]
+    turn_texts = await fetch_turn_texts(user_query.conversation_id, all_question_ids)
+
+    session_context = format_session_context(session, turn_texts)
+
     try:
         final: FinalResponse = await call_orchestrator(OrchestratorInput(
-            user_query=user_query,
-            session_context=format_session_context(session, user_query.text),
-            ltm_context=format_ltm_context(ltm),
+            user_query      = user_query,
+            session_context = session_context,
+            ltm_context     = format_ltm_context(ltm),
+            session         = session,
+            turn_texts      = turn_texts,
         ))
     except Exception as exc:
         logger.error("orchestrator_call_failed: %s", exc, exc_info=True)
@@ -458,15 +470,20 @@ async def main_agent_workflow(user_query: UserQuery) -> QueryResponse:
         citations=final.citations,
     ).to_dict())
 
-    await append_turn(session, ConversationTurn(
-        question_id=user_query.question_id,
-        answer_id=final.answer_id,
-        question=user_query.text,
-        answer=final.answer,
-        domain=domain_str,
-        confidence=final.confidence,
-        tools_used=final.tools_used,
-    ))
+    _is_in_domain  = final.status in ("success", "failure")
+    _is_greeting   = final.response_type == "greeting"
+    await append_turn(
+        session,
+        ConversationTurn(
+            question_id = user_query.question_id,
+            answer_id   = final.answer_id,
+            domain      = domain_str,
+            confidence  = final.confidence,
+            tools_used  = final.tools_used,
+        ),
+        is_in_domain = _is_in_domain,
+        is_greeting  = _is_greeting,
+    )
 
     if len(session.turns) % settings.LTM_SUMMARY_EVERY_N == 0:
         task = asyncio.create_task(

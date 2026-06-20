@@ -1,29 +1,35 @@
 """
 Memory manager — short-term (session) + long-term (per-user summary).
 
-Short-term  : last SESSION_MAX_TURNS turns per conversation_id.
-              Stored in Cosmos `sessions` container.
+Short-term  : last SESSION_MAX_TURNS turn *pointers* per conversation_id.
+              Each pointer holds question_id, answer_id, domain, confidence,
+              tools_used, and timestamp — NO full text.
+              Full question/answer text lives in the chat-history container and
+              is fetched on demand via fetch_turn_texts().
+              Stored in Cosmos `sessions` container (TTL = 7 days).
               Also kept in process-local LRU cache for low-latency reads.
 
 Long-term   : rolling LLM-generated summary + extracted key_facts per user_id.
-              Stored in Cosmos `long-term-memory` container.
-              Updated every LTM_SUMMARY_EVERY_N turns.
+              Stored in Cosmos `long-term-memory` container (no TTL).
+              Updated every LTM_SUMMARY_EVERY_N turns as a background task.
 
-Both are injected into the orchestrator's classify_query system prompt so the
-LLM has full context when routing and synthesising answers.
+off_topic_streak:
+              Counts consecutive out-of-scope / declined responses in the session.
+              Reset to 0 on any successful in-domain answer.
+              Greeted-but-not-declined turns do NOT increment the streak.
+              The orchestrator uses this to append a bot-purpose reminder.
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-import re
 from collections import OrderedDict
 from datetime import datetime, timezone
 
 from shared.config import settings
 from shared.cosmos_client import (
-    get_ltm_container, get_sessions_container,
+    get_chat_container, get_ltm_container, get_sessions_container,
     get_document, upsert_document, query_documents,
 )
 from shared.models import ConversationTurn, LongTermMemoryRecord, SessionMemory
@@ -32,10 +38,6 @@ logger = logging.getLogger(__name__)
 
 
 # ── Async-safe LRU cache for session memory ───────────────────────────────────
-# The plain OrderedDict implementation was not safe for concurrent asyncio
-# coroutines — two coroutines racing on move_to_end / popitem could raise
-# RuntimeError or silently corrupt the dict. This class serialises all
-# access through an asyncio.Lock.
 
 class _SessionLRUCache:
     def __init__(self, max_size: int = 200) -> None:
@@ -74,17 +76,30 @@ async def load_session(conversation_id: str, user_id: str) -> SessionMemory:
             get_document, get_sessions_container(), conversation_id, conversation_id
         )
     except Exception as exc:
-        logger.error("session_load_failed conversation_id=%s — starting fresh: %s", conversation_id, exc, exc_info=True)
+        logger.error(
+            "session_load_failed conversation_id=%s — starting fresh: %s",
+            conversation_id, exc, exc_info=True,
+        )
         doc = None
 
     if doc:
-        turns = [ConversationTurn(**t) for t in doc.get("turns", [])]
+        turns = [
+            ConversationTurn(**{
+                k: v for k, v in t.items()
+                # Accept docs written before the text-strip migration;
+                # ignore question/answer fields if present.
+                if k in ("question_id", "answer_id", "domain", "confidence",
+                         "tools_used", "timestamp")
+            })
+            for t in doc.get("turns", [])
+        ]
         session = SessionMemory(
-            conversation_id=conversation_id,
-            user_id=user_id,
-            turns=turns,
-            created_at=doc.get("created_at", datetime.now(timezone.utc).isoformat()),
-            updated_at=doc.get("updated_at", datetime.now(timezone.utc).isoformat()),
+            conversation_id  = conversation_id,
+            user_id          = user_id,
+            turns            = turns,
+            off_topic_streak = int(doc.get("off_topic_streak", 0)),
+            created_at       = doc.get("created_at", datetime.now(timezone.utc).isoformat()),
+            updated_at       = doc.get("updated_at", datetime.now(timezone.utc).isoformat()),
         )
     else:
         session = SessionMemory(conversation_id=conversation_id, user_id=user_id)
@@ -93,89 +108,126 @@ async def load_session(conversation_id: str, user_id: str) -> SessionMemory:
     return session
 
 
-async def append_turn(session: SessionMemory, turn: ConversationTurn) -> None:
-    """Append turn, trim to window, persist to Cosmos."""
+async def append_turn(
+    session: SessionMemory,
+    turn: ConversationTurn,
+    *,
+    is_in_domain: bool,
+    is_greeting: bool = False,
+) -> None:
+    """
+    Append a turn pointer, update the off_topic_streak, trim to window, persist.
+
+    streak rules:
+      - Successful in-domain answer  → reset streak to 0
+      - Greeting response            → streak unchanged (greetings are fine)
+      - Any other out-of-scope       → increment streak
+    """
     session.turns.append(turn)
     if len(session.turns) > settings.SESSION_MAX_TURNS:
         session.turns = session.turns[-settings.SESSION_MAX_TURNS:]
+
+    if is_in_domain:
+        session.off_topic_streak = 0
+    elif not is_greeting:
+        session.off_topic_streak += 1
+
     session.updated_at = datetime.now(timezone.utc).isoformat()
     await _session_cache.set(session.conversation_id, session)
     try:
         await asyncio.to_thread(upsert_document, get_sessions_container(), session.to_dict())
     except Exception as exc:
-        logger.error("session_persist_failed conversation_id=%s: %s", session.conversation_id, exc, exc_info=True)
+        logger.error(
+            "session_persist_failed conversation_id=%s: %s",
+            session.conversation_id, exc, exc_info=True,
+        )
     logger.debug(
-        "session_updated conversation_id=%s turns=%d",
-        session.conversation_id, len(session.turns),
+        "session_updated conversation_id=%s turns=%d streak=%d",
+        session.conversation_id, len(session.turns), session.off_topic_streak,
     )
 
 
-# Phrases that strongly suggest the user is continuing a prior thread.
-_FOLLOWUP_PHRASES = (
-    "what about", "and the", "tell me more", "more details", "what else",
-    "how about", "can you explain", "elaborate", "and what", "what if",
-    "same for", "related to", "similar to", "what is the difference",
-    # Reformatting / instruction commands directed at a prior answer
-    "summarize", "summary", "in 10 words", "in 5 words", "in bullet",
-    "bullet point", "shorter", "briefly", "simplify", "rephrase",
-    "explain in", "in simple", "in points", "give me a summary",
-    "make it shorter", "translate", "in one line", "one sentence",
-    "concise", "short answer", "brief answer", "short summary", "quick summary",
-    "in brief", "in short", "quick answer", "one liner", "one-liner",
-)
-# Bare pronouns that reference something from a prior turn.
-_PRONOUN_RE = re.compile(
-    r'\b(it|that|this|they|their|its|those|these|them|he|she|we|same)\b',
-    re.IGNORECASE,
-)
-# Max chars of answer shown per turn in the context block.
-_SESSION_CONTEXT_ANSWER_CHARS = 800
-# Always include the last 3 turns — kept small to stay lean on tokens.
-# The classifier LLM now decides follow-up detection via is_followup;
-# we always provide a small window so it has enough context without
-# bloating every prompt.
-_SESSION_CONTEXT_TURNS = 3
-
-
-def needs_session_context(query: str) -> bool:
+async def fetch_turn_texts(
+    conversation_id: str,
+    question_ids: list[str],
+) -> dict[str, dict[str, str]]:
     """
-    Heuristic retained as a fallback for the rewrite step.
-    Primary follow-up detection is now done by the classifier LLM via
-    the is_followup field — this function is no longer the main gate.
+    Batch-fetch question and answer text for a list of question_ids from
+    the chat-history container (partitioned by conversation_id).
+
+    Returns a dict keyed by question_id:
+      { question_id: {"question": "...", "answer": "..."} }
+
+    Missing documents are silently omitted from the result.
     """
-    q = query.strip().lower()
-    if len(q) < 40:
-        return True
-    if any(phrase in q for phrase in _FOLLOWUP_PHRASES):
-        return True
-    if _PRONOUN_RE.search(q):
-        return True
-    return False
+    if not question_ids:
+        return {}
+
+    placeholders = ", ".join(f"@id{i}" for i in range(len(question_ids)))
+    params = [{"name": f"@id{i}", "value": qid} for i, qid in enumerate(question_ids)]
+    cosmos_query = (
+        f"SELECT c.question_id, c.question, c.answer "
+        f"FROM c WHERE c.question_id IN ({placeholders})"
+    )
+
+    try:
+        docs = await asyncio.to_thread(
+            query_documents,
+            get_chat_container(),
+            cosmos_query,
+            params,
+            partition_key=conversation_id,
+        )
+        return {
+            d["question_id"]: {
+                "question": d.get("question", ""),
+                "answer":   d.get("answer", ""),
+            }
+            for d in docs
+            if "question_id" in d
+        }
+    except Exception as exc:
+        logger.error(
+            "fetch_turn_texts_failed conversation_id=%s: %s",
+            conversation_id, exc, exc_info=True,
+        )
+        return {}
 
 
-def format_session_context(session: SessionMemory, query: str = "") -> str:
+def format_session_context(
+    session: SessionMemory,
+    turn_texts: dict[str, dict[str, str]],
+    *,
+    max_turns: int = 3,
+    max_answer_chars: int = 800,
+) -> str:
     """
-    Returns the last few turns only when the heuristic suggests the query
-    may be a follow-up (short text, pronoun, or known follow-up phrase).
-    Standalone questions skip the context block entirely, saving tokens and
-    avoiding spurious is_followup classifications by the LLM.
+    Build a formatted context block from the most recent `max_turns` turns.
+    Only includes turns whose text was successfully fetched.
 
-    The rewrite step downstream is already gated on is_followup=True, so
-    even if the heuristic passes context through on a borderline query the
-    classifier LLM still makes the final call on whether to rewrite.
+    Returns an empty string when the session has no turns or no text was fetched.
+    The block is injected into the classifier and rewrite prompts so the LLM
+    can resolve follow-ups and detect topic continuations.
     """
-    if not session.turns:
+    if not session.turns or not turn_texts:
         return ""
-    if not needs_session_context(query):
-        return ""
-    recent = session.turns[-_SESSION_CONTEXT_TURNS:]
-    lines = [f"## Recent conversation (last {len(recent)} turn(s))"]
+
+    recent = session.turns[-max_turns:]
+    lines  = [f"## Recent conversation (last {len(recent)} turn(s))"]
+    included = 0
     for t in recent:
-        lines.append(f"Q: {t.question}")
-        answer_excerpt = t.answer[:_SESSION_CONTEXT_ANSWER_CHARS]
-        if len(t.answer) > _SESSION_CONTEXT_ANSWER_CHARS:
+        texts = turn_texts.get(t.question_id)
+        if not texts:
+            continue
+        lines.append(f"Q: {texts['question']}")
+        answer_excerpt = texts["answer"][:max_answer_chars]
+        if len(texts["answer"]) > max_answer_chars:
             answer_excerpt += "…"
         lines.append(f"A: {answer_excerpt}")
+        included += 1
+
+    if not included:
+        return ""
     return "\n".join(lines)
 
 
@@ -191,12 +243,12 @@ async def load_ltm(user_id: str) -> LongTermMemoryRecord | None:
         return None
     if doc:
         return LongTermMemoryRecord(
-            id=doc["id"],
-            user_id=doc["user_id"],
-            summary=doc.get("summary", ""),
-            key_facts=doc.get("key_facts", []),
-            last_updated=doc.get("last_updated", ""),
-            source_conversation_ids=doc.get("source_conversation_ids", []),
+            id                      = doc["id"],
+            user_id                 = doc["user_id"],
+            summary                 = doc.get("summary", ""),
+            key_facts               = doc.get("key_facts", []),
+            last_updated            = doc.get("last_updated", ""),
+            source_conversation_ids = doc.get("source_conversation_ids", []),
         )
     return None
 
@@ -205,14 +257,15 @@ async def update_ltm(user_id: str, session: SessionMemory) -> None:
     """
     Called every LTM_SUMMARY_EVERY_N turns. Uses LLM to produce a rolling
     summary + key facts list from the full session history.
+    Fetches turn texts from chat-history before summarising.
     """
-    from shared.azure_clients import get_openai_client  # noqa: PLC0415
+    from shared.azure_clients import get_openai_client
+    from prompts import LTM_UPDATE_SYSTEM
 
-    existing = await load_ltm(user_id)
-    prior_summary = existing.summary if existing else ""
+    existing      = await load_ltm(user_id)
+    prior_summary = existing.summary   if existing else ""
     prior_facts   = existing.key_facts if existing else []
 
-    # Bound the prior summary and facts to avoid token overflow on long-lived users.
     prior_summary_bounded = prior_summary[:settings.LTM_MAX_SUMMARY_CHARS]
     prior_facts_bounded   = prior_facts[:settings.LTM_MAX_FACTS]
 
@@ -222,15 +275,19 @@ async def update_ltm(user_id: str, session: SessionMemory) -> None:
             user_id, len(prior_summary), settings.LTM_MAX_SUMMARY_CHARS,
         )
 
+    # Fetch full text for all turns in this session for the LTM summary.
+    question_ids = [t.question_id for t in session.turns]
+    turn_texts   = await fetch_turn_texts(session.conversation_id, question_ids)
     all_text = "\n".join(
-        f"Q: {t.question}\nA: {t.answer}" for t in session.turns
+        f"Q: {turn_texts[t.question_id]['question']}\nA: {turn_texts[t.question_id]['answer']}"
+        for t in session.turns
+        if t.question_id in turn_texts
     )
 
-    system = (
-        "You are a memory assistant. Given prior summary, prior facts, and new conversation turns, "
-        "produce an updated summary (max 150 words) and an updated list of key facts (max 15 bullet strings). "
-        "Return ONLY JSON: {\"summary\": \"...\", \"key_facts\": [\"...\", ...]}"
-    )
+    if not all_text:
+        logger.warning("ltm_update_skipped user_id=%s — no turn texts available", user_id)
+        return
+
     user_msg = (
         f"Prior summary:\n{prior_summary_bounded}\n\n"
         f"Prior key facts:\n{json.dumps(prior_facts_bounded)}\n\n"
@@ -240,43 +297,42 @@ async def update_ltm(user_id: str, session: SessionMemory) -> None:
     try:
         resp = await asyncio.to_thread(
             get_openai_client().chat.completions.create,
-            model=settings.AZURE_OPENAI_CHAT_DEPLOYMENT,
-            messages=[
-                {"role": "system", "content": system},
+            model    = settings.AZURE_OPENAI_CHAT_DEPLOYMENT,
+            messages = [
+                {"role": "system", "content": LTM_UPDATE_SYSTEM},
                 {"role": "user",   "content": user_msg},
             ],
-            temperature=0,
-            max_tokens=600,
-            response_format={"type": "json_object"},
+            temperature     = 0,
+            max_tokens      = 600,
+            response_format = {"type": "json_object"},
         )
-        raw = json.loads(resp.choices[0].message.content)
-        summary    = raw.get("summary", prior_summary_bounded)
-        key_facts  = raw.get("key_facts", prior_facts_bounded)
+        raw       = json.loads(resp.choices[0].message.content)
+        summary   = raw.get("summary",   prior_summary_bounded)
+        key_facts = raw.get("key_facts", prior_facts_bounded)
     except Exception as exc:
-        logger.error(
-            "ltm_update_llm_failed user_id=%s: %s",
-            user_id, exc, exc_info=True,
-        )
+        logger.error("ltm_update_llm_failed user_id=%s: %s", user_id, exc, exc_info=True)
         return
 
-    src_ids = list({*(existing.source_conversation_ids if existing else []), session.conversation_id})
+    src_ids = list({
+        *(existing.source_conversation_ids if existing else []),
+        session.conversation_id,
+    })
     record = LongTermMemoryRecord(
-        id=f"ltm-{user_id}",
-        user_id=user_id,
-        summary=summary,
-        key_facts=key_facts,
-        source_conversation_ids=src_ids,
+        id       = f"ltm-{user_id}",
+        user_id  = user_id,
+        summary  = summary,
+        key_facts = key_facts,
+        source_conversation_ids = src_ids,
     )
     await asyncio.to_thread(upsert_document, get_ltm_container(), record.to_dict())
-    logger.info("LTM updated user_id=%s facts=%d", user_id, len(key_facts))
+    logger.info("ltm_updated user_id=%s facts=%d", user_id, len(key_facts))
 
 
 def format_ltm_context(ltm: LongTermMemoryRecord | None) -> str:
     """Render LTM as a compact string for prompt injection."""
     if not ltm or not ltm.summary:
         return ""
-    lines = ["## Long-term user context"]
-    lines.append(ltm.summary)
+    lines = ["## Long-term user context", ltm.summary]
     if ltm.key_facts:
         lines.append("Key facts:")
         lines.extend(f"- {f}" for f in ltm.key_facts[:10])

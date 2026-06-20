@@ -11,15 +11,9 @@ from typing import Any
 
 from shared.azure_clients import get_openai_client
 from shared.config import settings
+from prompts import DECOMPOSE_SYSTEM
 
 logger = logging.getLogger(__name__)
-
-_SYSTEM_PROMPT = """You are a query analysis assistant.
-Your job is to decompose a complex question into 2-4 simple, self-contained sub-questions.
-Each sub-question should be independently answerable from a document store.
-
-Return ONLY a valid JSON array of strings. No markdown fences, no explanation.
-Example output: ["What is the annual leave entitlement?", "How is annual leave calculated for part-time employees?"]"""
 
 
 def decompose_query(query: str) -> list[str]:
@@ -29,7 +23,7 @@ def decompose_query(query: str) -> list[str]:
         response = client.chat.completions.create(
             model=settings.AZURE_OPENAI_CHAT_DEPLOYMENT,
             messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "system", "content": DECOMPOSE_SYSTEM},
                 {"role": "user", "content": f"Question: {query}"},
             ],
             temperature=0,

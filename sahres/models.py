@@ -57,6 +57,14 @@ class OrchestratorInput:
     user_query:      UserQuery
     session_context: str = ""
     ltm_context:     str = ""
+    # SessionMemory object — passed by main_agent so the orchestrator can
+    # read off_topic_streak and pass it to whole-chat summary without a
+    # separate Cosmos fetch. None when called via the HTTP endpoint directly.
+    session:         object | None = None  # type: SessionMemory | None
+    # Pre-fetched turn texts: {question_id: {"question": ..., "answer": ...}}
+    # Populated by main_agent before calling the orchestrator so that
+    # reformat and whole-chat-summary paths don't need a separate DB call.
+    turn_texts:      dict | None = None
 
 
 @dataclass
@@ -145,7 +153,7 @@ class RetrievalResult:
 
 @dataclass
 class FinalResponse:
-    status:        str            # "success" | "failure" | "error"
+    status:        str            # "success" | "failure" | "error" | "out_of_scope"
     answer:        str
     domain:        Domain | None
     sources:       list[dict]  = field(default_factory=list)
@@ -158,6 +166,10 @@ class FinalResponse:
     tools_used:    list[str]   = field(default_factory=list)
     show_citations: bool       = False
     citations:      list[dict] = field(default_factory=list)
+    # Set for out_of_scope responses so main_agent knows whether to increment
+    # the streak (offensive/decline/general/decision_making) or leave it alone
+    # (greeting/clarify).
+    response_type: str         = ""
 
     def to_dict(self) -> dict:
         return {
@@ -174,6 +186,7 @@ class FinalResponse:
             "tools_used":      [t.value if isinstance(t, RetrievalTool) else t for t in self.tools_used],
             "show_citations":  self.show_citations,
             "citations":       self.citations,
+            "response_type":   self.response_type,
         }
 
 
@@ -248,10 +261,13 @@ class FeedbackRecord:
 
 @dataclass
 class ConversationTurn:
+    """
+    Lightweight pointer stored in SessionMemory.
+    Full question/answer text lives in ChatHistoryRecord (chat-history container)
+    and is fetched on demand via fetch_turn_texts() when context is needed.
+    """
     question_id: str
     answer_id:   str
-    question:    str
-    answer:      str
     domain:      str
     confidence:  float
     tools_used:  list[str]
@@ -261,8 +277,6 @@ class ConversationTurn:
         return {
             "question_id": self.question_id,
             "answer_id":   self.answer_id,
-            "question":    self.question,
-            "answer":      self.answer,
             "domain":      self.domain,
             "confidence":  self.confidence,
             "tools_used":  self.tools_used,
@@ -275,20 +289,25 @@ class SessionMemory:
     conversation_id: str
     user_id:         str
     turns:           list[ConversationTurn] = field(default_factory=list)
+    # Number of consecutive out-of-scope/declined responses in this session.
+    # Reset to 0 on any successful in-domain answer.
+    # Used to append a purpose reminder after 3+ off-topic exchanges.
+    off_topic_streak: int = 0
     created_at:      str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at:      str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def to_dict(self) -> dict:
         from shared.config import settings
         return {
-            "id":              self.conversation_id,
-            "conversation_id": self.conversation_id,
-            "user_id":         self.user_id,
-            "turns":           [t.to_dict() for t in self.turns],
-            "created_at":      self.created_at,
-            "updated_at":      self.updated_at,
-            "type":            "session",
-            "ttl":             settings.SESSION_TTL_SECONDS,
+            "id":               self.conversation_id,
+            "conversation_id":  self.conversation_id,
+            "user_id":          self.user_id,
+            "turns":            [t.to_dict() for t in self.turns],
+            "off_topic_streak": self.off_topic_streak,
+            "created_at":       self.created_at,
+            "updated_at":       self.updated_at,
+            "type":             "session",
+            "ttl":              settings.SESSION_TTL_SECONDS,
         }
 
 
