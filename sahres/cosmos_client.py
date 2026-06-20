@@ -1,12 +1,11 @@
 """
 Cosmos DB client factory + container accessors.
 
-Auth priority (per container operation):
-  1. COSMOS_KEY present → key-based auth  (local dev only)
-  2. COSMOS_KEY absent  → DefaultAzureCredential (managed identity — production)
+All authentication uses DefaultAzureCredential (managed identity).
+The managed identity must be assigned the Cosmos DB Built-in Data Contributor
+role on the Cosmos account.
 
-The database and containers are NOT auto-created here — run scripts/setup_cosmos.py
-once before first deploy. probe_cosmos() will raise clearly if they are missing.
+No connection strings or account keys are used or accepted.
 
 Partition key layout (must match provisioned Cosmos containers):
   chat-history     → /conversation_id
@@ -31,19 +30,10 @@ logger = logging.getLogger(__name__)
 
 @lru_cache(maxsize=1)
 def get_cosmos_client() -> CosmosClient:
-    # Guard: only call .get_secret_value() when the key is actually set.
-    key: str | None = (
-        settings.COSMOS_KEY.get_secret_value()
-        if settings.COSMOS_KEY is not None
-        else None
-    )
-    if key:
-        logger.info("cosmos_auth=key")
-        return CosmosClient(url=str(settings.COSMOS_ENDPOINT), credential=key)
     logger.info("cosmos_auth=managed_identity")
     return CosmosClient(
-        url=str(settings.COSMOS_ENDPOINT),
-        credential=DefaultAzureCredential(),
+        url        = str(settings.COSMOS_ENDPOINT),
+        credential = DefaultAzureCredential(),
     )
 
 

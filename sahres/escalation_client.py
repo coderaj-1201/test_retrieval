@@ -5,8 +5,10 @@ Azure Service Bus (fallback when Zendesk is not configured).
 Priority:
   1. Zendesk configured (ZENDESK_SUBDOMAIN + ZENDESK_API_TOKEN + ZENDESK_USER_EMAIL)
      → ticket created via Zendesk REST API; real Zendesk ticket ID returned.
-  2. Service Bus configured (AZURE_SERVICE_BUS_NAMESPACE or CONNECTION_STR)
-     → message enqueued for downstream Logic App / webhook processing.
+     ZENDESK_API_TOKEN is a Zendesk-issued token (not Azure); injected into ACA
+     from Key Vault via a managed-identity secret reference.
+  2. Service Bus configured (AZURE_SERVICE_BUS_NAMESPACE)
+     → message enqueued via managed identity; no connection string used.
   3. Neither configured → RuntimeError (surfaced as a 503 to the caller).
 
 The caller always receives a reference string:
@@ -95,28 +97,17 @@ def _zendesk_create_ticket(
 # ── Service Bus (fallback) ─────────────────────────────────────────────────────
 
 def _sb_configured() -> bool:
-    return bool(
-        settings.AZURE_SERVICE_BUS_CONNECTION_STR
-        or settings.AZURE_SERVICE_BUS_NAMESPACE
-    )
+    return bool(settings.AZURE_SERVICE_BUS_NAMESPACE)
 
 
 def _sb_get_sender():
     from azure.servicebus import ServiceBusClient  # type: ignore[import-untyped]
     from azure.identity import DefaultAzureCredential
 
-    conn_str: str | None = (
-        settings.AZURE_SERVICE_BUS_CONNECTION_STR.get_secret_value()
-        if settings.AZURE_SERVICE_BUS_CONNECTION_STR is not None
-        else None
+    sb_client = ServiceBusClient(
+        fully_qualified_namespace = settings.AZURE_SERVICE_BUS_NAMESPACE,
+        credential                = DefaultAzureCredential(),
     )
-    if conn_str:
-        sb_client = ServiceBusClient.from_connection_string(conn_str)
-    else:
-        sb_client = ServiceBusClient(
-            fully_qualified_namespace=settings.AZURE_SERVICE_BUS_NAMESPACE,
-            credential=DefaultAzureCredential(),
-        )
     return sb_client.get_queue_sender(queue_name=settings.SB_QUEUE_ESCALATION)
 
 
@@ -226,8 +217,8 @@ def raise_ticket(
 
     raise RuntimeError(
         "No escalation channel configured. "
-        "Set ZENDESK_SUBDOMAIN/ZENDESK_API_TOKEN/ZENDESK_USER_EMAIL "
-        "or AZURE_SERVICE_BUS_NAMESPACE."
+        "Set ZENDESK_SUBDOMAIN + ZENDESK_API_TOKEN + ZENDESK_USER_EMAIL "
+        "or set AZURE_SERVICE_BUS_NAMESPACE."
     )
 
 
@@ -304,6 +295,6 @@ def connect_sme(
 
     raise RuntimeError(
         "No escalation channel configured. "
-        "Set ZENDESK_SUBDOMAIN/ZENDESK_API_TOKEN/ZENDESK_USER_EMAIL "
-        "or AZURE_SERVICE_BUS_NAMESPACE."
+        "Set ZENDESK_SUBDOMAIN + ZENDESK_API_TOKEN + ZENDESK_USER_EMAIL "
+        "or set AZURE_SERVICE_BUS_NAMESPACE."
     )

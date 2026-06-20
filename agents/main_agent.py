@@ -51,14 +51,10 @@ from shared.models import (
 )
 from shared.rate_limiter import RateLimitExceeded, check_rate_limit
 from shared.telemetry import record_attempts, record_confidence, record_escalation, record_query
-import os
-from dotenv import load_dotenv
-load_dotenv()
 
 configure_logging()
 logger = get_logger(__name__)
 
-_ORCHESTRATOR_URL      = os.getenv("ORCHESTRATOR_URL")
 _http: httpx.AsyncClient | None = None          # shared client — set in lifespan
 _orchestrator_breaker  = CircuitBreaker(name="orchestrator-agent", fail_max=3, reset_timeout=30)
 
@@ -157,7 +153,7 @@ async def _do_orchestrate(payload: dict) -> dict:
     # X-Request-ID threads the question_id through all agents for log correlation.
     headers = {**_internal_headers(), "X-Request-ID": payload.get("question_id", "")}
     resp = await client.post(
-        f"{_ORCHESTRATOR_URL}/orchestrate",
+        f"{str(settings.ORCHESTRATOR_URL).rstrip("/")}/orchestrate",
         json=payload,
         headers=headers,
     )
@@ -276,7 +272,7 @@ async def handle_raise_ticket(
         # Service Bus not configured — log clearly so this is never silently swallowed.
         logger.error(
             "ticket_queue_skipped: Service Bus not configured. "
-            "Set AZURE_SERVICE_BUS_NAMESPACE or AZURE_SERVICE_BUS_CONNECTION_STR."
+            "Set AZURE_SERVICE_BUS_NAMESPACE or AZURE_SERVICE_BUS_NAMESPACE."
         )
         correlation_id = f"REF-UNCONFIGURED-{uuid.uuid4().hex[:6].upper()}"
         answer = (
@@ -335,7 +331,7 @@ async def handle_connect_sme(
     else:
         logger.error(
             "sme_queue_skipped: Service Bus not configured. "
-            "Set AZURE_SERVICE_BUS_NAMESPACE or AZURE_SERVICE_BUS_CONNECTION_STR."
+            "Set AZURE_SERVICE_BUS_NAMESPACE or AZURE_SERVICE_BUS_NAMESPACE."
         )
         correlation_id = f"REF-UNCONFIGURED-{uuid.uuid4().hex[:6].upper()}"
         answer = (
@@ -601,7 +597,7 @@ async def readiness() -> Response:
     try:
         global _http
         probe_client = _http or httpx.AsyncClient(timeout=5.0)
-        r = await probe_client.get(f"{_ORCHESTRATOR_URL}/health/live")
+        r = await probe_client.get(f"{str(settings.ORCHESTRATOR_URL).rstrip("/")}/health/live")
         if r.status_code == 200:
             checks["orchestrator"] = "ok"
         else:

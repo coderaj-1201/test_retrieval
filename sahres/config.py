@@ -1,16 +1,17 @@
 """
-Application settings — validated via pydantic-settings at startup.
+Application settings — loaded from environment variables only.
 
-Auth notes:
-  - AZURE_OPENAI_API_KEY  : set only in local dev. Production uses DefaultAzureCredential.
-  - AZURE_SEARCH_API_KEY  : set only in local dev. Production uses DefaultAzureCredential.
-  - COSMOS_KEY            : set only in local dev. Production uses DefaultAzureCredential.
-  Removing any of these from the environment forces managed-identity auth — the
-  correct production path.  Leaving them set in production will shadow managed
-  identity silently, which is why they must be absent from ACA env vars on prod.
+All Azure service authentication uses DefaultAzureCredential (managed identity).
+There are NO API keys anywhere in this codebase or its environment variables.
 
-  INTERNAL_API_SECRET is required in staging/production (inter-agent auth header).
-  Leave blank only in local development.
+How secrets are injected in production (Azure Container Apps):
+  - Key Vault references: ACA mounts KV secrets as env vars via the managed identity.
+    e.g. INTERNAL_API_SECRET, ZENDESK_API_TOKEN, MicrosoftAppPassword.
+  - The managed identity itself provides access to OpenAI, Search, Cosmos,
+    and Service Bus — no credential env vars needed for those.
+
+Non-secret config values (endpoints, deployment names, container names, etc.)
+are set directly as ACA environment variables in Bicep/Terraform — no secrets store needed.
 """
 from __future__ import annotations
 
@@ -29,8 +30,8 @@ class Environment(StrEnum):
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
+        # No env_file — all values come from the process environment.
+        # In ACA these are set via the container app's environment config.
         case_sensitive=False,
         extra="ignore",
     )
@@ -40,56 +41,54 @@ class Settings(BaseSettings):
 
     # ── Azure AI Foundry ───────────────────────────────────────────────────────
     AZURE_FOUNDRY_PROJECT_ENDPOINT: AnyHttpUrl
-    # Used for managed-identity auth (production).
     AZURE_OPENAI_ENDPOINT: AnyHttpUrl
-    # Used for API-key auth (local dev). Foundry resources expose a separate
-    # cognitiveservices.azure.com endpoint for key-based access.
-    # Format: https://<hub-name>.cognitiveservices.azure.com/
-    # Leave blank in production (managed identity uses AZURE_OPENAI_ENDPOINT).
-    AZURE_OPENAI_COGNITIVESERVICES_ENDPOINT: AnyHttpUrl | None = None
     AZURE_OPENAI_CHAT_DEPLOYMENT: str      = "gpt-41-mini"
     AZURE_OPENAI_EMBEDDING_DEPLOYMENT: str = "text-embedding-3-large"
     AZURE_OPENAI_API_VERSION: str          = "2025-01-01-preview"
-    # None → DefaultAzureCredential (managed identity). Must NOT be set in prod.
-    AZURE_OPENAI_API_KEY: SecretStr | None = None
 
     # ── Azure AI Search ────────────────────────────────────────────────────────
     AZURE_SEARCH_ENDPOINT: AnyHttpUrl
-    # None → DefaultAzureCredential (managed identity). Must NOT be set in prod.
-    AZURE_SEARCH_API_KEY: SecretStr | None = None
     AZURE_SEARCH_INDEX: str               = "idx-rag"
     AZURE_SEARCH_SEMANTIC_CONFIG: str     = "rag-semantic-config"
 
     # ── Cosmos DB ──────────────────────────────────────────────────────────────
     COSMOS_ENDPOINT: AnyHttpUrl
-    # None → DefaultAzureCredential (managed identity). Must NOT be set in prod.
-    COSMOS_KEY: SecretStr | None           = None
     COSMOS_DATABASE: str                   = "csmsdb-aishrdsvcs-eus-prod"
     COSMOS_CONTAINER_CHAT: str             = "chat-history"
     COSMOS_CONTAINER_FEEDBACK: str         = "feedback"
     COSMOS_CONTAINER_SESSIONS: str         = "sessions"
     COSMOS_CONTAINER_LTM: str             = "long-term-memory"
 
+    # ── Inter-agent URLs ───────────────────────────────────────────────────────
+    # Set these to the internal ACA URLs of each agent container.
+    MAIN_AGENT_URL:    AnyHttpUrl          = "http://main-agent:8000"
+    ORCHESTRATOR_URL:  AnyHttpUrl          = "http://orchestrator:8001"
+    RETRIEVAL_URL:     AnyHttpUrl          = "http://retrieval:8002"
+
     # ── Inter-agent auth ───────────────────────────────────────────────────────
-    # Shared secret sent as X-Internal-Secret header between agents.
-    # Required in staging/production. Can be left empty in local dev only.
+    # Shared HMAC secret sent as X-Internal-Secret header between agents.
+    # Injected by ACA from Key Vault. Can be left unset in local dev only.
     INTERNAL_API_SECRET: SecretStr | None  = None
 
+    # ── Teams Bot ──────────────────────────────────────────────────────────────
+    # MicrosoftAppId and MicrosoftAppTenantId are non-secret (they appear in
+    # Azure AD app registrations). MicrosoftAppPassword is a secret injected
+    # from Key Vault via ACA secret reference.
+    MICROSOFT_APP_ID:        str           = ""
+    MICROSOFT_APP_PASSWORD:  SecretStr | None = None
+    MICROSOFT_APP_TYPE:      str           = "MultiTenant"
+    MICROSOFT_APP_TENANT_ID: str           = ""
+    BOT_PORT:                int           = Field(default=3978, ge=1, le=65535)
+
     # ── Service Bus (escalation fallback) ─────────────────────────────────────
-    # Production: set AZURE_SERVICE_BUS_NAMESPACE only (managed identity).
-    # Local dev: set AZURE_SERVICE_BUS_CONNECTION_STR (connection string).
-    # Service Bus is used ONLY when Zendesk is not configured.
-    AZURE_SERVICE_BUS_NAMESPACE: str | None       = None
-    AZURE_SERVICE_BUS_CONNECTION_STR: SecretStr | None = None
-    SB_QUEUE_ESCALATION: str                      = "escalation-requests"
+    # Set AZURE_SERVICE_BUS_NAMESPACE; managed identity provides access.
+    # Connection strings are NOT supported — use managed identity only.
+    AZURE_SERVICE_BUS_NAMESPACE: str | None = None
+    SB_QUEUE_ESCALATION: str               = "escalation-requests"
 
     # ── Zendesk (primary escalation channel) ──────────────────────────────────
-    # Set all three to enable Zendesk ticket creation.
-    # ZENDESK_SUBDOMAIN : the part before .zendesk.com (e.g. "mycompany")
-    # ZENDESK_API_TOKEN : generated in Zendesk Admin → Apps → API → Token access
-    # ZENDESK_USER_EMAIL: the agent account used for API calls (must have ticket:write)
-    # ZENDESK_GROUP_ID_TICKET: optional group ID for ticket routing
-    # ZENDESK_GROUP_ID_SME   : optional group ID for SME-connection routing
+    # Zendesk does not support managed identity.
+    # ZENDESK_API_TOKEN must be injected from Key Vault via ACA secret reference.
     ZENDESK_SUBDOMAIN:       str | None       = None
     ZENDESK_API_TOKEN:       SecretStr | None = None
     ZENDESK_USER_EMAIL:      str | None       = None
@@ -98,26 +97,14 @@ class Settings(BaseSettings):
 
     # ── RAG tuning ─────────────────────────────────────────────────────────────
     CONFIDENCE_THRESHOLD: float          = Field(default=0.65, ge=0.0, le=1.0)
-    # Per-citation bar — lower than the overall answer gate so that a source
-    # contributing ~50% of a cross-document answer isn't dropped from citations.
     CITATION_CONFIDENCE_THRESHOLD: float = Field(default=0.40, ge=0.0, le=1.0)
     MAX_RETRIEVAL_ATTEMPTS: int  = Field(default=3,    ge=1,   le=5)
     RETRIEVAL_TOP_K: int         = Field(default=5,    ge=1,   le=20)
     SYNTHESIS_TEMPERATURE: float = Field(default=0.0,  ge=0.0, le=1.0)
     MAX_QUERY_LENGTH: int        = Field(default=2000, ge=50,  le=8000)
-    # Total character budget for the context block sent to the synthesis LLM.
-    # Prevents exceeding the model's context window on large document sets.
-    # gpt-4o context is ~128k tokens; 12000 chars ≈ ~3000 tokens, leaving
-    # plenty of room for the system prompt, question, and output.
     SYNTHESIS_MAX_CONTEXT_CHARS: int = Field(default=12000, ge=2000, le=40000)
-    # Max source citations returned to the caller (additional sources still
-    # contribute to the synthesis context, only the citation list is capped).
     SYNTHESIS_MAX_SOURCES: int   = Field(default=5,    ge=1,   le=10)
-    # Hard cap on the final answer text length (chars) sent to the user.
     SYNTHESIS_MAX_ANSWER_CHARS: int = Field(default=10000, ge=500, le=20000)
-    # Max tokens the synthesis LLM may generate. Must be large enough to hold
-    # the full JSON envelope (answer + citations + keys) without truncation.
-    # Truncated JSON causes a JSONDecodeError → fallback to raw response blob.
     SYNTHESIS_MAX_TOKENS: int = Field(default=6000, ge=500, le=16000)
 
     # ── Memory ─────────────────────────────────────────────────────────────────
@@ -128,8 +115,6 @@ class Settings(BaseSettings):
     LTM_MAX_FACTS: int           = Field(default=10,     ge=3,   le=30)
 
     # ── Rate limiting ──────────────────────────────────────────────────────────
-    # Set REDIS_URL to enable distributed (multi-replica) rate limiting.
-    # Omit REDIS_URL to use the in-process token bucket (single-worker only).
     REDIS_URL: str | None = None
     RATE_LIMIT_RPM:   int = Field(default=20, ge=1,  le=600)
     RATE_LIMIT_BURST: int = Field(default=5,  ge=1,  le=50)
@@ -138,11 +123,12 @@ class Settings(BaseSettings):
     DOMAIN_CONFIDENCE_THRESHOLD: float = Field(default=0.6, ge=0.0, le=1.0)
 
     # ── Escalation SLAs ────────────────────────────────────────────────────────
-    # Override these in .env when SLA commitments change — no code edits needed.
     ESCALATION_SLA_TICKET: str = "4 business hours"
     ESCALATION_SLA_SME:    str = "2 business hours"
 
     # ── Observability ──────────────────────────────────────────────────────────
+    # Application Insights connection string — non-privileged telemetry push.
+    # Set via ACA environment variable; not sensitive enough for Key Vault.
     APPLICATIONINSIGHTS_CONNECTION_STRING: str | None = None
     LOG_LEVEL: str = "INFO"
 

@@ -62,16 +62,12 @@ from prompts import (
     WHOLE_CHAT_SUMMARY_SYSTEM,
     WHOLE_CHAT_PHRASES,
 )
-import os
-from dotenv import load_dotenv
-load_dotenv()
 
 configure_logging()
 logger = get_logger(__name__)
 
-_TOOL_LADDER   = [RetrievalTool.HYBRID, RetrievalTool.HYDE, RetrievalTool.DECOMPOSITION]
-_RETRIEVAL_URL = os.getenv("RETRIEVAL_URL")
-_ALL_DOMAINS   = list(Domain)
+_TOOL_LADDER = [RetrievalTool.HYBRID, RetrievalTool.HYDE, RetrievalTool.DECOMPOSITION]
+_ALL_DOMAINS = list(Domain)
 
 _http: httpx.AsyncClient | None = None
 _retrieval_breaker = CircuitBreaker(name="retrieval-agent", fail_max=3, reset_timeout=30)
@@ -383,7 +379,7 @@ async def _call_retrieval(req: OrchestratorRequest) -> RetrievalResult:
     client  = _http or httpx.AsyncClient(timeout=60.0)
     headers = {**_internal_headers(), "X-Request-ID": req.question_id}
     resp    = await client.post(
-        f"{_RETRIEVAL_URL}/retrieve", json=payload, headers=headers
+        f"{str(settings.RETRIEVAL_URL).rstrip('/')}/retrieve", json=payload, headers=headers
     )
     resp.raise_for_status()
     data = resp.json()

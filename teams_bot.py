@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import uuid
 import re
 from contextlib import asynccontextmanager
@@ -26,30 +25,30 @@ import uvicorn
 from botbuilder.core import ActivityHandler, TurnContext
 from botbuilder.integration.aiohttp import CloudAdapter, ConfigurationBotFrameworkAuthentication
 from botbuilder.schema import Activity, ActivityTypes, Attachment
-from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from card_mapper import build_answer_card, build_feedback_card
-
-load_dotenv()
+from shared.config import settings
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ── Env vars ───────────────────────────────────────────────────────────────────
-MICROSOFT_APP_ID        = os.getenv("MicrosoftAppId", "")
-MICROSOFT_APP_PASSWORD  = os.getenv("MicrosoftAppPassword", "")
-MICROSOFT_APP_TYPE      = os.getenv("MicrosoftAppType", "MultiTenant")
-MICROSOFT_APP_TENANT_ID = os.getenv("MicrosoftAppTenantId", "")
-MAIN_AGENT_URL          = os.getenv("MAIN_AGENT_URL", "http://localhost:8000")
-BOT_PORT                = int(os.getenv("BOT_PORT", 3978))
-ENVIRONMENT             = os.getenv("ENVIRONMENT", "production").lower()
+# ── Configuration from settings ────────────────────────────────────────────────
+MICROSOFT_APP_ID        = settings.MICROSOFT_APP_ID
+MICROSOFT_APP_PASSWORD  = (
+    settings.MICROSOFT_APP_PASSWORD.get_secret_value()
+    if settings.MICROSOFT_APP_PASSWORD is not None
+    else ""
+)
+MICROSOFT_APP_TYPE      = settings.MICROSOFT_APP_TYPE
+MICROSOFT_APP_TENANT_ID = settings.MICROSOFT_APP_TENANT_ID
+MAIN_AGENT_URL          = str(settings.MAIN_AGENT_URL).rstrip("/")
+BOT_PORT                = settings.BOT_PORT
+ENVIRONMENT             = settings.ENVIRONMENT.value
 
-# Maximum characters accepted from a user message after mention removal.
-# Matches MAX_QUERY_LENGTH on the main agent side.
-_MAX_USER_TEXT = int(os.getenv("MAX_QUERY_LENGTH", "2000"))
+_MAX_USER_TEXT = settings.MAX_QUERY_LENGTH
 
 
 # ── Bot Framework adapter ──────────────────────────────────────────────────────
