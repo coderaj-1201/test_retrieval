@@ -30,8 +30,10 @@ class Environment(StrEnum):
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        # No env_file — all values come from the process environment.
-        # In ACA these are set via the container app's environment config.
+        # Loads .env when present (local dev convenience).
+        # In ACA, env vars are injected directly — no .env file needed.
+        env_file=".env",
+        env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
     )
