@@ -285,7 +285,7 @@ SAMPLE_DOCS = [
             "Employees must complete annual security awareness training before "
             "October 31 each year."
         ),
-        "domain":      Domain.IT.value,
+        "domain":      Domain.HR.value,
         "title":       "Mandatory Security Training",
         "doc_name":    "Compliance Requirements",
         "doc_url":     "",
@@ -361,7 +361,7 @@ SAMPLE_DOCS = [
         "content":     (
             "Office access cards inactive for 90 consecutive days are automatically disabled."
         ),
-        "domain":      Domain.OPS.value,
+        "domain":      Domain.IT.value,
         "title":       "Access Card Management",
         "doc_name":    "Facilities Manual",
         "doc_url":     "",
