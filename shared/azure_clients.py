@@ -1,16 +1,9 @@
 """
-Azure client factories — managed identity only.
+Azure client factories.
 
-All Azure service access uses DefaultAzureCredential.
-No API keys are accepted or used anywhere in this module.
-
-In Azure Container Apps the managed identity is automatically available to the
-process — no credential configuration needed beyond assigning the identity the
-correct RBAC roles:
-  OpenAI   : Cognitive Services OpenAI User
-  Search   : Search Index Data Reader (+ Contributor for index management)
-  Cosmos   : Cosmos DB Built-in Data Contributor
-  Foundry  : Azure AI Developer
+In production (Azure Container Apps) all access uses DefaultAzureCredential
+(managed identity). For local development, set the optional *_KEY / *_API_KEY
+environment variables in .env to bypass managed identity entirely.
 """
 from __future__ import annotations
 
@@ -18,6 +11,7 @@ import logging
 from functools import lru_cache
 
 from azure.ai.projects import AIProjectClient
+from azure.core.credentials import AzureKeyCredential
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from azure.search.documents import SearchClient
 from azure.search.documents.indexes import SearchIndexClient
@@ -43,6 +37,15 @@ def get_foundry_client() -> AIProjectClient:
 @lru_cache(maxsize=1)
 def get_openai_client() -> AzureOpenAI:
     endpoint = str(settings.AZURE_OPENAI_ENDPOINT).rstrip("/")
+    if settings.AZURE_OPENAI_API_KEY:
+        logger.info("openai_auth=api_key endpoint=%s", endpoint)
+        return AzureOpenAI(
+            azure_endpoint = endpoint,
+            api_key        = settings.AZURE_OPENAI_API_KEY.get_secret_value(),
+            api_version    = settings.AZURE_OPENAI_API_VERSION,
+            max_retries    = 0,
+            timeout        = 30.0,
+        )
     logger.info("openai_auth=managed_identity endpoint=%s", endpoint)
     token_provider = get_bearer_token_provider(
         _credential(),
@@ -52,8 +55,6 @@ def get_openai_client() -> AzureOpenAI:
         azure_endpoint          = endpoint,
         azure_ad_token_provider = token_provider,
         api_version             = settings.AZURE_OPENAI_API_VERSION,
-        # max_retries=0: tenacity owns retries; SDK default of 2 would
-        # multiply attempts (2 × tenacity 3 = 6 calls).
         max_retries = 0,
         timeout     = 30.0,
     )
@@ -61,6 +62,13 @@ def get_openai_client() -> AzureOpenAI:
 
 @lru_cache(maxsize=1)
 def get_search_client() -> SearchClient:
+    if settings.AZURE_SEARCH_API_KEY:
+        logger.info("search_auth=api_key")
+        return SearchClient(
+            endpoint   = str(settings.AZURE_SEARCH_ENDPOINT),
+            index_name = settings.AZURE_SEARCH_INDEX,
+            credential = AzureKeyCredential(settings.AZURE_SEARCH_API_KEY.get_secret_value()),
+        )
     logger.info("search_auth=managed_identity")
     return SearchClient(
         endpoint    = str(settings.AZURE_SEARCH_ENDPOINT),
@@ -71,6 +79,11 @@ def get_search_client() -> SearchClient:
 
 @lru_cache(maxsize=1)
 def get_search_index_client() -> SearchIndexClient:
+    if settings.AZURE_SEARCH_API_KEY:
+        return SearchIndexClient(
+            endpoint   = str(settings.AZURE_SEARCH_ENDPOINT),
+            credential = AzureKeyCredential(settings.AZURE_SEARCH_API_KEY.get_secret_value()),
+        )
     return SearchIndexClient(
         endpoint   = str(settings.AZURE_SEARCH_ENDPOINT),
         credential = _credential(),
