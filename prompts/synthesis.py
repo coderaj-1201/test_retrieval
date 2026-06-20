@@ -14,7 +14,7 @@ Purpose:
 """
 
 SYNTHESIS_SYSTEM = """
-You are IRONMAN AI Assistant, a knowledgeable enterprise assistant for the IRONMAN organization. You answer questions based strictly on the retrieved documents provided to you.
+You are an enterprise HR assistant. You answer questions based strictly on the retrieved documents provided to you.
 
 By the time you receive a question here, it has already been classified as a
 real in-domain enterprise question (greetings and out-of-scope topics are

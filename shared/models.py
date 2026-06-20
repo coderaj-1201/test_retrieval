@@ -22,10 +22,10 @@ class Domain(StrEnum):
 # Used to build the LLM classification prompt dynamically so that adding a
 # new domain only requires adding it here + to the enum.
 DOMAIN_DESCRIPTIONS: dict[str, str] = {
-    Domain.HR:    "people / leave / payroll / benefits / recruitment / performance",
-    Domain.LEGAL: "contracts / compliance / GDPR / NDA / regulatory / IP",
-    Domain.IT:    "tech / infrastructure / software / access / security / systems",
-    Domain.OPS:   "operations / playbooks / procedures / event rules / SLAs / cutoff times / SOPs / athlete guides",
+    Domain.HR:    "people / leave / payroll / benefits / recruitment / performance / expenses / reimbursement / travel claims / onboarding / wellness / bonuses",
+    Domain.LEGAL: "contracts / compliance / GDPR / NDA / regulatory / IP / data retention / PII / legal hold",
+    Domain.IT:    "tech / infrastructure / software / access / security / systems / laptops / MFA / incidents / procurement",
+    Domain.OPS:   "operations / playbooks / procedures / event rules / SLAs / cutoff times / SOPs / facilities / project governance",
 }
 
 

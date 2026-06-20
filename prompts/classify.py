@@ -30,17 +30,17 @@ from shared.models import DOMAIN_DESCRIPTIONS, Domain
 # Varied by response_type; never a single fixed string.
 CLASSIFY_FALLBACKS: dict[str, str] = {
     "greeting": (
-        "Hey! Good to see you. I'm IRONMAN AI — here whenever you have "
-        "Operations questions."
+        "Hey! Good to see you. I'm here whenever you have questions about "
+        "HR policies, IT, legal, or operations."
     ),
     "general": (
-        "I'm IRONMAN AI, built to help with enterprise Operations topics — "
-        "playbooks, SOPs, SLAs, procedures, and event rules. What would you "
-        "like to know?"
+        "I'm an enterprise HR assistant — I can answer questions about expenses, "
+        "leave, onboarding, IT systems, compliance, contracts, and operational "
+        "procedures. What would you like to know?"
     ),
     "clarify": (
         "Could you clarify what you'd like to follow up on? I'm here to help "
-        "with Operations questions."
+        "with HR, IT, legal, or operations questions."
     ),
     "decision_making": (
         "I can surface relevant policies and information to help inform your "
@@ -48,32 +48,31 @@ CLASSIFY_FALLBACKS: dict[str, str] = {
         "any related guidelines or procedures?"
     ),
     "offensive": (
-        "That's not something I'll engage with. Happy to help if you have an "
-        "Operations question."
+        "That's not something I'll engage with. Happy to help if you have a "
+        "work-related question."
     ),
     "decline": (
-        "That's outside what I cover — I'm focused on enterprise Operations "
-        "topics. Is there something in that space I can help with?"
+        "That's outside what I cover — I'm focused on enterprise topics like HR, "
+        "IT, legal, and operations. Is there something in that space I can help with?"
     ),
 }
 
 # Appended when a user has sent 3+ consecutive off-topic/declined messages.
 # Deterministic — not LLM-generated.
 STREAK_REMINDER = (
-    "\n\n*Just a heads-up — I'm here specifically for enterprise Operations "
-    "queries (playbooks, SOPs, SLAs, procedures, event rules). Happy to help "
-    "when you have one!*"
+    "\n\n*Just a heads-up — I'm here specifically for enterprise queries "
+    "(HR policies, IT, legal, operations). Happy to help when you have one!*"
 )
 
 # Firmer version for streaks >= 6.
 STREAK_REMINDER_FIRM = (
-    "\n\n*Quick reminder: I'm an enterprise Operations assistant and can only "
-    "help with work-related queries — playbooks, SOPs, SLAs, and similar topics. "
+    "\n\n*Quick reminder: I'm an enterprise assistant and can only help with "
+    "work-related queries — HR, IT, legal, and operations topics. "
     "Let me know when you have one of those!*"
 )
 
 
-def build_classify_system(bot_name: str = "IRONMAN AI") -> str:
+def build_classify_system(bot_name: str = "Enterprise HR Assistant") -> str:
     """Build the classification system prompt from the live domain registry."""
     domain_values = "|".join(d.value for d in Domain)
     domain_lines  = "\n".join(
@@ -153,12 +152,12 @@ DEFLECTION_MESSAGE RULES (domain=none only)
 Write a SHORT (1–3 sentences), NON-REPETITIVE message tailored to the actual
 question. Never reuse the same exact wording across turns. Tone by type:
 
-  greeting       → Warm, natural. Mention you can help with Operations topics.
+  greeting       → Warm, natural. Mention you can help with HR/IT/legal/operations topics.
                    NEVER say "out of scope", "I can't help", or apologise.
                    Just greet back and signal availability.
 
-  general        → Friendly. Briefly describe what you help with (Operations:
-                   playbooks, SOPs, SLAs, procedures, event rules) in your own words.
+  general        → Friendly. Briefly describe what you help with (HR policies,
+                   expenses, leave, IT, compliance, contracts, operations) in your own words.
 
   clarify        → Professional. Reference the likely prior topic from memory
                    context and invite the user to confirm or rephrase.
@@ -169,11 +168,11 @@ question. Never reuse the same exact wording across turns. Tone by type:
 
   offensive      → Match the directness, not the rudeness. Firm, clear, no lecture.
                    Decline without apologising. One or two sentences max.
-                   Example tone: "That's not going to work here. Operations questions
-                   only — happy to help if you have one."
+                   Example tone: "That's not going to work here. Work-related
+                   questions only — happy to help if you have one."
 
   decline        → Polite but firm. Name the specific topic they asked about.
-                   Redirect to Operations. Do NOT be preachy or repeat prior declines.
+                   Redirect to HR/IT/legal/operations. Do NOT be preachy or repeat prior declines.
 
 Keep deflection_message under 3 sentences. Never use a fixed template.
 """
