@@ -1,17 +1,19 @@
 """
 Application settings — loaded from environment variables only.
 
-All Azure service authentication uses DefaultAzureCredential (managed identity).
-There are NO API keys anywhere in this codebase or its environment variables.
+In production (Azure Container Apps) all authentication uses DefaultAzureCredential
+(managed identity). No API keys or connection strings are used.
 
-How secrets are injected in production (Azure Container Apps):
-  - Key Vault references: ACA mounts KV secrets as env vars via the managed identity.
-    e.g. INTERNAL_API_SECRET, ZENDESK_API_TOKEN, MicrosoftAppPassword.
-  - The managed identity itself provides access to OpenAI, Search, Cosmos,
-    and Service Bus — no credential env vars needed for those.
+How config is injected in ACA:
+  - Non-secret values (endpoints, deployment names, container names) are set
+    directly as ACA environment variables in Bicep/Terraform.
+  - Secret values (INTERNAL_API_SECRET, ZENDESK_API_TOKEN, MicrosoftAppPassword)
+    are injected via Key Vault secret references on the container app.
+  - Azure services (OpenAI, Search, Cosmos, Service Bus) are accessed via the
+    managed identity — no credential env vars needed for those.
 
-Non-secret config values (endpoints, deployment names, container names, etc.)
-are set directly as ACA environment variables in Bicep/Terraform — no secrets store needed.
+See infra/PERMISSIONS.md for the full list of RBAC roles the managed identity
+must be assigned before deployment.
 """
 from __future__ import annotations
 
@@ -44,20 +46,17 @@ class Settings(BaseSettings):
     # ── Azure AI Foundry ───────────────────────────────────────────────────────
     AZURE_FOUNDRY_PROJECT_ENDPOINT: AnyHttpUrl
     AZURE_OPENAI_ENDPOINT: AnyHttpUrl
-    AZURE_OPENAI_API_KEY: SecretStr | None = None  # set locally to bypass managed identity
     AZURE_OPENAI_CHAT_DEPLOYMENT: str      = "gpt-41-mini"
     AZURE_OPENAI_EMBEDDING_DEPLOYMENT: str = "text-embedding-3-large"
     AZURE_OPENAI_API_VERSION: str          = "2025-01-01-preview"
 
     # ── Azure AI Search ────────────────────────────────────────────────────────
     AZURE_SEARCH_ENDPOINT: AnyHttpUrl
-    AZURE_SEARCH_API_KEY: SecretStr | None = None  # set locally to bypass managed identity
     AZURE_SEARCH_INDEX: str               = "idx-rag"
     AZURE_SEARCH_SEMANTIC_CONFIG: str     = "rag-semantic-config"
 
     # ── Cosmos DB ──────────────────────────────────────────────────────────────
     COSMOS_ENDPOINT: AnyHttpUrl
-    COSMOS_KEY: SecretStr | None           = None  # set locally to bypass managed identity
     COSMOS_DATABASE: str                   = "csmsdb-aishrdsvcs-eus-prod"
     COSMOS_CONTAINER_CHAT: str             = "chat-history"
     COSMOS_CONTAINER_FEEDBACK: str         = "feedback"

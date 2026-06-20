@@ -1,131 +1,159 @@
-# Local development compose — spins up all four services in dependency order.
+# Production-parity compose — all config via environment variables, no .env file.
 #
-# Prerequisites:
-#   1. Copy .env.template to .env and fill in local-dev values
-#      (AZURE_OPENAI_API_KEY, AZURE_SEARCH_API_KEY, COSMOS_KEY for key-based auth).
-#   2. Set ENVIRONMENT=development in .env.
-#   3. docker compose up --build
+# In production (Azure Container Apps) these env vars are set directly on each
+# container app. Secrets (INTERNAL_API_SECRET, bot password, Zendesk token) are
+# injected via Key Vault secret references — set them here only for local testing.
 #
-# Service URLs (host-accessible):
-#   Teams Bot      : http://localhost:3978
-#   Main Agent     : http://localhost:8000
-#   Orchestrator   : http://localhost:8001
-#   Retrieval      : http://localhost:8002
+# Prerequisites for local testing:
+#   - Azure CLI logged in (az login) — DefaultAzureCredential uses your CLI token.
+#   - Managed identity roles assigned OR you are the subscription owner.
+#   - Fill in the required values below (marked REQUIRED) before running.
 #
-# Notes:
-#   - MAIN_AGENT_URL / ORCHESTRATOR_URL / RETRIEVAL_URL are overridden here
-#     to use Docker service-to-service DNS so inter-agent calls stay on the
-#     internal Docker network.
-#   - Teams Bot reaches the internet via ngrok for Bot Framework callbacks;
-#     this compose does not start ngrok automatically.
+# Service URLs:
+#   Teams Bot   : http://localhost:3978
+#   Main Agent  : http://localhost:8000
+#   Orchestrator: http://localhost:8001
+#   Retrieval   : http://localhost:8002
 
 version: "3.9"
 
-x-healthcheck-defaults: &healthcheck-defaults
+x-healthcheck: &healthcheck
   interval: 30s
   timeout: 10s
   retries: 5
   start_period: 30s
 
-x-common-build: &common-build
+x-build: &build
   context: .
   dockerfile: Dockerfile
 
+# ── Shared non-secret config ──────────────────────────────────────────────────
+# Copy this block into each service that needs it.
+x-azure-env: &azure-env
+  # Azure AI Foundry
+  AZURE_FOUNDRY_PROJECT_ENDPOINT: "https://<your-foundry>.services.ai.azure.com"   # REQUIRED
+  AZURE_OPENAI_ENDPOINT:          "https://<your-foundry>.services.ai.azure.com/openai/v1"  # REQUIRED
+  AZURE_OPENAI_CHAT_DEPLOYMENT:       "gpt-41-mini"
+  AZURE_OPENAI_EMBEDDING_DEPLOYMENT:  "text-embedding-3-large"
+  AZURE_OPENAI_API_VERSION:           "2025-01-01-preview"
+  # Azure AI Search
+  AZURE_SEARCH_ENDPOINT: "https://<your-search>.search.windows.net"  # REQUIRED
+  AZURE_SEARCH_INDEX:    "idx-rag"
+  AZURE_SEARCH_SEMANTIC_CONFIG: "rag-semantic-config"
+  # Cosmos DB
+  COSMOS_ENDPOINT:    "https://<your-cosmos>.documents.azure.com:443/"  # REQUIRED
+  COSMOS_DATABASE:    "csmsdb-aishrdsvcs-eus-prod"
+  COSMOS_CONTAINER_CHAT:      "chat-history"
+  COSMOS_CONTAINER_FEEDBACK:  "feedback"
+  COSMOS_CONTAINER_SESSIONS:  "sessions"
+  COSMOS_CONTAINER_LTM:       "long-term-memory"
+  # RAG tuning
+  CONFIDENCE_THRESHOLD:         "0.65"
+  CITATION_CONFIDENCE_THRESHOLD: "0.40"
+  MAX_RETRIEVAL_ATTEMPTS:       "3"
+  RETRIEVAL_TOP_K:              "5"
+  SYNTHESIS_TEMPERATURE:        "0.0"
+  SYNTHESIS_MAX_TOKENS:         "6000"
+  # Memory
+  SESSION_MAX_TURNS:      "10"
+  SESSION_TTL_SECONDS:    "604800"
+  LTM_SUMMARY_EVERY_N:    "5"
+  # Environment
+  ENVIRONMENT: "production"
+  LOG_LEVEL:   "INFO"
+
 services:
 
-  # ── Retrieval Agent (no upstream deps within this stack) ──────────────────
+  # ── Retrieval Agent ───────────────────────────────────────────────────────
   retrieval-agent:
     build:
-      <<: *common-build
+      <<: *build
       args:
         SERVICE_MODULE: "agents.retrieval_agent:app"
         SERVICE_PORT: "8002"
     ports:
       - "8002:8002"
-    env_file: .env
     environment:
+      <<: *azure-env
       SERVICE_PORT: "8002"
+      # Inter-agent secret — set via Key Vault reference in ACA
+      INTERNAL_API_SECRET: ""   # leave empty for local testing or set a value
     healthcheck:
-      <<: *healthcheck-defaults
-      test:
-        - CMD
-        - python
-        - -c
-        - "import urllib.request; urllib.request.urlopen('http://localhost:8002/health/live', timeout=5)"
+      <<: *healthcheck
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8002/health/live', timeout=5)"]
     restart: on-failure
 
   # ── Orchestrator Agent ────────────────────────────────────────────────────
   orchestrator-agent:
     build:
-      <<: *common-build
+      <<: *build
       args:
         SERVICE_MODULE: "agents.orchestrator_agent:app"
         SERVICE_PORT: "8001"
     ports:
       - "8001:8001"
-    env_file: .env
     environment:
+      <<: *azure-env
       SERVICE_PORT: "8001"
-      # Override so the orchestrator reaches retrieval via Docker DNS
       RETRIEVAL_URL: "http://retrieval-agent:8002"
+      INTERNAL_API_SECRET: ""
     depends_on:
       retrieval-agent:
         condition: service_healthy
     healthcheck:
-      <<: *healthcheck-defaults
-      test:
-        - CMD
-        - python
-        - -c
-        - "import urllib.request; urllib.request.urlopen('http://localhost:8001/health/live', timeout=5)"
+      <<: *healthcheck
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8001/health/live', timeout=5)"]
     restart: on-failure
 
   # ── Main Agent ────────────────────────────────────────────────────────────
   main-agent:
     build:
-      <<: *common-build
+      <<: *build
       args:
         SERVICE_MODULE: "agents.main_agent:app"
         SERVICE_PORT: "8000"
     ports:
       - "8000:8000"
-    env_file: .env
     environment:
+      <<: *azure-env
       SERVICE_PORT: "8000"
       ORCHESTRATOR_URL: "http://orchestrator-agent:8001"
+      INTERNAL_API_SECRET: ""
     depends_on:
       orchestrator-agent:
         condition: service_healthy
     healthcheck:
-      <<: *healthcheck-defaults
-      test:
-        - CMD
-        - python
-        - -c
-        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live', timeout=5)"
+      <<: *healthcheck
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live', timeout=5)"]
     restart: on-failure
 
   # ── Teams Bot ─────────────────────────────────────────────────────────────
   teams-bot:
     build:
-      <<: *common-build
+      <<: *build
       args:
         SERVICE_MODULE: "teams_bot:app"
         SERVICE_PORT: "3978"
     ports:
       - "3978:3978"
-    env_file: .env
     environment:
+      <<: *azure-env
       SERVICE_PORT: "3978"
       MAIN_AGENT_URL: "http://main-agent:8000"
+      INTERNAL_API_SECRET: ""
+      # Bot Framework credentials — inject via Key Vault in ACA
+      MICROSOFT_APP_ID:        ""   # REQUIRED for Teams
+      MICROSOFT_APP_PASSWORD:  ""   # REQUIRED — Key Vault ref in ACA
+      MICROSOFT_APP_TYPE:      "MultiTenant"
+      MICROSOFT_APP_TENANT_ID: ""
     depends_on:
       main-agent:
         condition: service_healthy
     healthcheck:
-      <<: *healthcheck-defaults
-      test:
-        - CMD
-        - python
-        - -c
-        - "import urllib.request; urllib.request.urlopen('http://localhost:3978/health/live', timeout=5)"
+      <<: *healthcheck
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:3978/health/live', timeout=5)"]
     restart: on-failure

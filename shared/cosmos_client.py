@@ -1,8 +1,9 @@
 """
-Cosmos DB client factory + container accessors.
+Cosmos DB client factory + container accessors — managed identity only.
 
-In production uses DefaultAzureCredential (managed identity).
-For local dev set COSMOS_KEY in .env to use account key auth instead.
+Authentication uses DefaultAzureCredential. The managed identity must be assigned
+the Cosmos DB Built-in Data Contributor role on the Cosmos account (data-plane RBAC,
+not Azure IAM). See infra/PERMISSIONS.md for the exact az CLI command.
 
 Partition key layout (must match provisioned Cosmos containers):
   chat-history     → /conversation_id
@@ -23,19 +24,14 @@ from shared.config import settings
 logger = logging.getLogger(__name__)
 
 
-# ── Client factory ─────────────────────────────────────────────────────────────
-
 @lru_cache(maxsize=1)
 def get_cosmos_client() -> CosmosClient:
-    url = str(settings.COSMOS_ENDPOINT)
-    if settings.COSMOS_KEY:
-        logger.info("cosmos_auth=account_key")
-        return CosmosClient(url=url, credential=settings.COSMOS_KEY.get_secret_value())
     logger.info("cosmos_auth=managed_identity")
-    return CosmosClient(url=url, credential=DefaultAzureCredential())
+    return CosmosClient(
+        url        = str(settings.COSMOS_ENDPOINT),
+        credential = DefaultAzureCredential(),
+    )
 
-
-# ── Database accessor — raises clearly if DB missing ──────────────────────────
 
 @lru_cache(maxsize=1)
 def _get_database():
@@ -47,13 +43,11 @@ def _get_database():
     except cosmos_exc.CosmosResourceNotFoundError:
         raise RuntimeError(
             f"Cosmos database '{settings.COSMOS_DATABASE}' does not exist. "
-            "Run `python scripts/setup_cosmos.py` before deploying."
+            "Run scripts/setup_cosmos.py before deploying."
         )
     except Exception as exc:
         raise RuntimeError(f"Failed to connect to Cosmos DB: {exc}") from exc
 
-
-# ── Container accessor ─────────────────────────────────────────────────────────
 
 def _get_container(container_name: str) -> ContainerProxy:
     db = _get_database()
@@ -64,11 +58,9 @@ def _get_container(container_name: str) -> ContainerProxy:
     except cosmos_exc.CosmosResourceNotFoundError:
         raise RuntimeError(
             f"Cosmos container '{container_name}' does not exist in database "
-            f"'{settings.COSMOS_DATABASE}'. Run `python scripts/setup_cosmos.py`."
+            f"'{settings.COSMOS_DATABASE}'. Run scripts/setup_cosmos.py."
         )
 
-
-# ── Public accessors (cached per process) ─────────────────────────────────────
 
 @lru_cache(maxsize=1)
 def get_chat_container() -> ContainerProxy:
@@ -90,14 +82,8 @@ def get_ltm_container() -> ContainerProxy:
     return _get_container(settings.COSMOS_CONTAINER_LTM)
 
 
-# ── Startup probe ──────────────────────────────────────────────────────────────
-
 def probe_cosmos() -> None:
-    """
-    Call once during app lifespan startup.
-    Forces container accessor caching and fails loudly if anything is misconfigured.
-    Also validates that the sessions container has TTL enabled at the container level.
-    """
+    """Call once at startup. Forces container caching and fails loudly on misconfiguration."""
     for fn, label in [
         (get_chat_container,     settings.COSMOS_CONTAINER_CHAT),
         (get_feedback_container, settings.COSMOS_CONTAINER_FEEDBACK),
@@ -107,14 +93,13 @@ def probe_cosmos() -> None:
         fn()
         logger.info("cosmos_probe_ok container=%s", label)
 
-    # Warn if TTL is not enabled on the sessions container — sessions will never expire.
     try:
         sessions_props = get_sessions_container().read()
         ttl_setting = sessions_props.get("resource", {}).get("defaultTtl")
         if ttl_setting is None:
             logger.warning(
                 "cosmos_sessions_ttl_not_enabled: container '%s' has no defaultTtl. "
-                "Session documents will never expire. Enable TTL on the container.",
+                "Session documents will never expire.",
                 settings.COSMOS_CONTAINER_SESSIONS,
             )
         else:
@@ -123,13 +108,7 @@ def probe_cosmos() -> None:
         logger.warning("cosmos_sessions_ttl_check_failed: %s", exc)
 
 
-# ── Generic helpers ────────────────────────────────────────────────────────────
-
 def upsert_document(container: ContainerProxy, doc: dict) -> None:
-    """
-    Fire-and-forget upsert. Logs on failure, never raises — a Cosmos write
-    failure must never take down a query response.
-    """
     try:
         container.upsert_item(body=doc)
     except cosmos_exc.CosmosHttpResponseError as exc:
@@ -169,19 +148,10 @@ def query_documents(
     params: list[dict],
     partition_key: str | None = None,
 ) -> list[dict]:
-    """
-    Execute a parameterised Cosmos query.
-
-    Pass `partition_key` whenever the partition key value is known — this scopes
-    the query to a single partition and avoids expensive cross-partition fan-out.
-    Only omit `partition_key` for admin/analytics queries where a full scan is
-    intentional; those calls will emit a WARNING so they are visible in logs.
-    """
     cross_partition = partition_key is None
     if cross_partition:
         logger.warning(
-            "cosmos_cross_partition_query container=%s query=%.80s "
-            "— pass partition_key to avoid full scan",
+            "cosmos_cross_partition_query container=%s query=%.80s",
             container.id, query,
         )
     try:
@@ -190,7 +160,6 @@ def query_documents(
             kwargs["enable_cross_partition_query"] = True
         else:
             kwargs["partition_key"] = partition_key
-
         return list(container.query_items(**kwargs))
     except cosmos_exc.CosmosHttpResponseError as exc:
         logger.error(
