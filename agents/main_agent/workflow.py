@@ -120,6 +120,9 @@ async def call_orchestrator(inp: OrchestratorInput) -> FinalResponse:
         "question_id":     user_query.question_id,
         "session_context": inp.session_context,
         "ltm_context":     inp.ltm_context,
+        # Last answer by question_id — orchestrator uses this for reformat shortcut
+        # instead of parsing the session_context string (which contains multiple turns).
+        "last_answer": inp.last_answer or "",
     }
     try:
         data = await _orchestrator_breaker.call(_do_orchestrate, payload)
@@ -195,6 +198,16 @@ async def main_agent_workflow(user_query: UserQuery) -> QueryResponse:
     turn_texts = await fetch_turn_texts(user_query.conversation_id, all_question_ids)
     session_context = format_session_context(session, turn_texts)
 
+    # Extract the most recent answer by ID so orchestrator reformat shortcut
+    # gets the exact text without parsing the multi-turn context string.
+    _last_answer = ""
+    if session.turns and turn_texts:
+        for t in reversed(session.turns):
+            texts = turn_texts.get(t.question_id, {})
+            if texts.get("answer"):
+                _last_answer = texts["answer"]
+                break
+
     try:
         final: FinalResponse = await call_orchestrator(OrchestratorInput(
             user_query=user_query,
@@ -202,6 +215,7 @@ async def main_agent_workflow(user_query: UserQuery) -> QueryResponse:
             ltm_context=format_ltm_context(ltm),
             session=session,
             turn_texts=turn_texts,
+            last_answer=_last_answer,
         ))
     except Exception as exc:
         logger.error("orchestrator_call_failed: %s", exc, exc_info=True)

@@ -89,9 +89,7 @@ async def orchestrator_workflow(inp: OrchestratorInput) -> FinalResponse:
     # ── Path A: out-of-scope (greetings, general, offensive, etc.) ────────────
     if classification.out_of_scope:
         # Reformat verb with no prior in-domain context — give a friendly nudge.
-        _has_prior_turn = bool(session and turn_texts and session.turns and
-                               any(turn_texts.get(t.question_id, {}).get("answer") for t in session.turns))
-        if _is_reformat_command(user_query.text) and not _has_prior_turn:
+        if _is_reformat_command(user_query.text) and not inp.last_answer:
             return FinalResponse(
                 status="out_of_scope",
                 answer="There's nothing to condense yet! Ask me something first — I can help with HR, IT, Legal, or Operations policies.",
@@ -209,15 +207,9 @@ async def orchestrator_workflow(inp: OrchestratorInput) -> FinalResponse:
 
     # ── Path B: reformat latest answer ────────────────────────────────────────
     # "Summarize" alone → reformat.  "Summarize our chat" → whole-chat (Path C).
-    # Extract the last turn's answer by question_id — never parse the context blob.
-    _last_answer: str | None = None
-    if session and turn_texts and session.turns:
-        for t in reversed(session.turns):
-            texts = turn_texts.get(t.question_id)
-            if texts and texts.get("answer"):
-                _last_answer = texts["answer"]
-                logger.debug("reformat_last_turn_id=%s", t.question_id)
-                break
+    # last_answer is extracted by question_id in main_agent and sent in the HTTP
+    # payload — no string parsing needed, works correctly with multiple turns.
+    _last_answer = inp.last_answer or ""
 
     if _last_answer and _is_reformat_command(user_query.text) and not _is_whole_chat_summary(user_query.text):
         logger.info("reformat_shortcut_activated query=%.60s", user_query.text)

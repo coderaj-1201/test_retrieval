@@ -80,6 +80,7 @@ async def orchestrate(raw: Request) -> Response:
     body        = await raw.json()
     session_ctx = body.pop("session_context", "")
     ltm_ctx     = body.pop("ltm_context", "")
+    last_answer = body.pop("last_answer", "")
 
     user_query = UserQuery(
         text=body.get("text", ""),
@@ -101,6 +102,7 @@ async def orchestrate(raw: Request) -> Response:
             ltm_context=ltm_ctx,
             session=None,
             turn_texts=None,
+            last_answer=last_answer,
         ))
         outputs = result_obj.get_outputs()
         final: FinalResponse = outputs[0] if outputs else FinalResponse(

@@ -82,6 +82,10 @@ class OrchestratorInput:
     # Populated by main_agent before calling the orchestrator so that
     # reformat and whole-chat-summary paths don't need a separate DB call.
     turn_texts:      dict | None = None
+    # Most recent answer text, extracted by question_id in main_agent.
+    # Sent in the HTTP payload so the orchestrator reformat shortcut has the
+    # exact answer without parsing the multi-turn session_context string.
+    last_answer:     str = ""
 
 
 @dataclass
