@@ -44,19 +44,20 @@ class Settings(BaseSettings):
     ENVIRONMENT: Environment = Environment.PRODUCTION
 
     # ── Azure AI Foundry ───────────────────────────────────────────────────────
-    AZURE_FOUNDRY_PROJECT_ENDPOINT: AnyHttpUrl
-    AZURE_OPENAI_ENDPOINT: AnyHttpUrl
+    # Optional: teams-bot does not use these directly
+    AZURE_FOUNDRY_PROJECT_ENDPOINT: AnyHttpUrl | None = None
+    AZURE_OPENAI_ENDPOINT: AnyHttpUrl | None          = None
     AZURE_OPENAI_CHAT_DEPLOYMENT: str      = "gpt-41-mini"
     AZURE_OPENAI_EMBEDDING_DEPLOYMENT: str = "text-embedding-3-large"
     AZURE_OPENAI_API_VERSION: str          = "2025-01-01-preview"
 
     # ── Azure AI Search ────────────────────────────────────────────────────────
-    AZURE_SEARCH_ENDPOINT: AnyHttpUrl
+    AZURE_SEARCH_ENDPOINT: AnyHttpUrl | None = None
     AZURE_SEARCH_INDEX: str               = "idx-rag"
     AZURE_SEARCH_SEMANTIC_CONFIG: str     = "rag-semantic-config"
 
     # ── Cosmos DB ──────────────────────────────────────────────────────────────
-    COSMOS_ENDPOINT: AnyHttpUrl
+    COSMOS_ENDPOINT: AnyHttpUrl | None = None
     COSMOS_DATABASE: str                   = "csmsdb-aishrdsvcs-eus-prod"
     COSMOS_CONTAINER_CHAT: str             = "chat-history"
     COSMOS_CONTAINER_FEEDBACK: str         = "feedback"
