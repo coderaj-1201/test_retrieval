@@ -87,6 +87,29 @@ async def orchestrator_workflow(inp: OrchestratorInput) -> FinalResponse:
             tools_used=[], show_citations=False, citations=[],
         )
 
+    # ── Pre-flight: reformat command with a prior answer ──────────────────────
+    # Must run BEFORE the out_of_scope check. The classifier often labels short
+    # reformat instructions ("summarize it", "shorter", "2 lines") as greeting
+    # or clarify — out_of_scope=True — which would send them to the personality
+    # responder. We intercept here deterministically: if there is a prior answer
+    # and the query is a reformat verb, just reformat it regardless of domain.
+    _last_answer = inp.last_answer or ""
+
+    if _last_answer and _is_reformat_command(user_query.text) and not _is_whole_chat_summary(user_query.text):
+        logger.info("reformat_preflight_activated query=%.60s", user_query.text)
+        reformatted = await _reformat_prior_answer(user_query.text, _last_answer)
+        if reformatted:
+            resp_domain = classification.domain if not classification.out_of_scope else None
+            return FinalResponse(
+                status="success", answer=reformatted,
+                domain=resp_domain, sources=[], confidence=1.0, attempts_used=0,
+                conversation_id=user_query.conversation_id,
+                user_id=user_query.user_id,
+                question_id=user_query.question_id,
+                tools_used=[], show_citations=False, citations=[],
+            )
+        logger.warning("reformat_preflight_fallthrough — continuing to normal routing")
+
     # ── Path A: out-of-scope (greetings, general, offensive, etc.) ────────────
     if classification.out_of_scope:
         # Reformat verb with no prior in-domain context — give a friendly nudge.
@@ -211,25 +234,7 @@ async def orchestrator_workflow(inp: OrchestratorInput) -> FinalResponse:
             domain, secondary_domain, domain_confidence,
         )
 
-    # ── Path B: reformat latest answer ────────────────────────────────────────
-    # "Summarize" alone → reformat.  "Summarize our chat" → whole-chat (Path C).
-    # last_answer is extracted by question_id in main_agent and sent in the HTTP
-    # payload — no string parsing needed, works correctly with multiple turns.
-    _last_answer = inp.last_answer or ""
-
-    if _last_answer and _is_reformat_command(user_query.text) and not _is_whole_chat_summary(user_query.text):
-        logger.info("reformat_shortcut_activated query=%.60s", user_query.text)
-        reformatted = await _reformat_prior_answer(user_query.text, _last_answer)
-        if reformatted:
-            return FinalResponse(
-                status="success", answer=reformatted,
-                domain=domain, sources=[], confidence=1.0, attempts_used=0,
-                conversation_id=user_query.conversation_id,
-                user_id=user_query.user_id,
-                question_id=user_query.question_id,
-                tools_used=[], show_citations=False, citations=[],
-            )
-        logger.warning("reformat_shortcut_fallthrough — proceeding to retrieval")
+    # ── Path B: whole-chat guard (reformat already handled in pre-flight above) ─
 
     # ── Path C: whole-chat summary ─────────────────────────────────────────────
     if _is_whole_chat_summary(user_query.text):
