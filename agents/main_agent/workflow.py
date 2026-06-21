@@ -29,10 +29,9 @@ from shared.cosmos_client import get_chat_container, upsert_document
 from shared.logging_config import get_logger
 from shared.memory import (
     append_turn,
-    fetch_latest_answer,
-    fetch_turn_texts,
+    fetch_recent_chat_records,
     format_ltm_context,
-    format_session_context,
+    format_recent_context,
     load_ltm,
     load_session,
     update_ltm,
@@ -193,25 +192,20 @@ async def main_agent_workflow(user_query: UserQuery) -> QueryResponse:
     session = await load_session(user_query.conversation_id, user_query.user_id)
     ltm = await load_ltm(user_query.user_id)
 
-    # Eagerly fetch all turn texts so the Orchestrator has them for:
-    # classifier context, reformat shortcut, and whole-chat summary.
-    all_question_ids = [t.question_id for t in session.turns]
-    turn_texts = await fetch_turn_texts(user_query.conversation_id, all_question_ids)
-    session_context = format_session_context(session, turn_texts)
+    # Fetch the 3 most recent turns directly from chat-history (newest first).
+    # - records[0]["answer"] = the answer the user just saw → used for reformat shortcut
+    # - all 3 records → session_context for classifier and query rewriter
+    # Queried by _ts DESC: always consistent, no replica cache issues.
+    recent_records = await fetch_recent_chat_records(user_query.conversation_id, 3)
+    session_context = format_recent_context(recent_records)
+    _last_answer = recent_records[0]["answer"] if recent_records else ""
 
-    # Fetch most recent answer directly from chat-history (partitioned by conversation_id,
-    # ordered by _ts DESC). This is always consistent: chat-history is written
-    # synchronously before the response is returned to the user, so by the time
-    # the user types a follow-up the record is guaranteed to be in Cosmos.
-    # Avoids replica-skew on _session_cache and stale session.last_answer values.
-    _last_answer = await fetch_latest_answer(user_query.conversation_id)
     try:
         final: FinalResponse = await call_orchestrator(OrchestratorInput(
             user_query=user_query,
             session_context=session_context,
             ltm_context=format_ltm_context(ltm),
             session=session,
-            turn_texts=turn_texts,
             last_answer=_last_answer,
         ))
     except Exception as exc:
@@ -295,7 +289,6 @@ async def main_agent_workflow(user_query: UserQuery) -> QueryResponse:
         ),
         is_in_domain=_is_in_domain,
         is_greeting=_is_greeting,
-        last_answer=final.answer if final.answer and final.status != "error" else "",
     )
 
     if len(session.turns) % settings.LTM_SUMMARY_EVERY_N == 0:

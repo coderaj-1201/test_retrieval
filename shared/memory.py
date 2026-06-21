@@ -24,7 +24,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections import OrderedDict
 from datetime import datetime, timezone
 
 from shared.config import settings
@@ -37,40 +36,10 @@ from shared.models import ConversationTurn, LongTermMemoryRecord, SessionMemory
 logger = logging.getLogger(__name__)
 
 
-# ── Async-safe LRU cache for session memory ───────────────────────────────────
-
-class _SessionLRUCache:
-    def __init__(self, max_size: int = 200) -> None:
-        self._cache: OrderedDict[str, SessionMemory] = OrderedDict()
-        self._max   = max_size
-        self._lock  = asyncio.Lock()
-
-    async def get(self, key: str) -> SessionMemory | None:
-        async with self._lock:
-            if key not in self._cache:
-                return None
-            self._cache.move_to_end(key)
-            return self._cache[key]
-
-    async def set(self, key: str, value: SessionMemory) -> None:
-        async with self._lock:
-            self._cache[key] = value
-            self._cache.move_to_end(key)
-            if len(self._cache) > self._max:
-                self._cache.popitem(last=False)
-
-
-_session_cache = _SessionLRUCache(max_size=200)
-
-
 # ── Short-term memory ─────────────────────────────────────────────────────────
 
 async def load_session(conversation_id: str, user_id: str) -> SessionMemory:
-    """Load session from cache → Cosmos → create new."""
-    cached = await _session_cache.get(conversation_id)
-    if cached:
-        return cached
-
+    """Load session from Cosmos, or create a new one if not found."""
     try:
         doc = await asyncio.to_thread(
             get_document, get_sessions_container(), conversation_id, conversation_id
@@ -105,7 +74,6 @@ async def load_session(conversation_id: str, user_id: str) -> SessionMemory:
     else:
         session = SessionMemory(conversation_id=conversation_id, user_id=user_id)
 
-    await _session_cache.set(conversation_id, session)
     return session
 
 
@@ -141,7 +109,6 @@ async def append_turn(
         session.last_answer = last_answer
 
     session.updated_at = datetime.now(timezone.utc).isoformat()
-    await _session_cache.set(session.conversation_id, session)
     try:
         await asyncio.to_thread(upsert_document, get_sessions_container(), session.to_dict())
     except Exception as exc:
@@ -202,40 +169,30 @@ async def fetch_turn_texts(
         return {}
 
 
-def format_session_context(
-    session: SessionMemory,
-    turn_texts: dict[str, dict[str, str]],
+def format_recent_context(
+    records: list[dict[str, str]],
     *,
-    max_turns: int = 3,
     max_answer_chars: int = 800,
 ) -> str:
     """
-    Build a formatted context block from the most recent `max_turns` turns.
-    Only includes turns whose text was successfully fetched.
+    Build a formatted context block from a list of recent chat records
+    (as returned by fetch_recent_chat_records, newest-first).
 
-    Returns an empty string when the session has no turns or no text was fetched.
-    The block is injected into the classifier and rewrite prompts so the LLM
-    can resolve follow-ups and detect topic continuations.
+    Returns an empty string when records is empty.
+    Injected into classifier and rewrite prompts so the LLM can resolve
+    follow-ups and detect topic continuations.
     """
-    if not session.turns or not turn_texts:
+    if not records:
         return ""
 
-    recent = session.turns[-max_turns:]
-    lines  = [f"## Recent conversation (last {len(recent)} turn(s))"]
-    included = 0
-    for t in recent:
-        texts = turn_texts.get(t.question_id)
-        if not texts:
-            continue
-        lines.append(f"Q: {texts['question']}")
-        answer_excerpt = texts["answer"][:max_answer_chars]
-        if len(texts["answer"]) > max_answer_chars:
-            answer_excerpt += "…"
-        lines.append(f"A: {answer_excerpt}")
-        included += 1
-
-    if not included:
-        return ""
+    # Reverse so context reads oldest → newest (natural conversation order).
+    ordered = list(reversed(records))
+    lines = [f"## Recent conversation (last {len(ordered)} turn(s))"]
+    for r in ordered:
+        lines.append(f"Q: {r['question']}")
+        answer = r["answer"]
+        excerpt = answer[:max_answer_chars] + ("…" if len(answer) > max_answer_chars else "")
+        lines.append(f"A: {excerpt}")
     return "\n".join(lines)
 
 
@@ -336,13 +293,18 @@ async def update_ltm(user_id: str, session: SessionMemory) -> None:
     logger.info("ltm_updated user_id=%s facts=%d", user_id, len(key_facts))
 
 
-async def fetch_latest_answer(conversation_id: str) -> str:
+async def fetch_recent_chat_records(
+    conversation_id: str,
+    n: int,
+) -> list[dict[str, str]]:
     """
-    Query the chat-history container for the most recent non-empty answer
-    in this conversation. Uses _ts DESC so it always reflects the answer
-    the user just saw — bypassing session cache and replica skew entirely.
+    Return the most recent `n` chat-history records for a conversation,
+    newest first. Each entry has "question" and "answer" keys.
+
+    Queried by _ts DESC so it is always consistent with what the user last saw —
+    no session cache, no replica skew.
     """
-    query = "SELECT TOP 1 c.answer FROM c ORDER BY c._ts DESC"
+    query = f"SELECT TOP {n} c.question, c.answer FROM c ORDER BY c._ts DESC"
     try:
         docs = await asyncio.to_thread(
             query_documents,
@@ -351,14 +313,16 @@ async def fetch_latest_answer(conversation_id: str) -> str:
             [],
             partition_key=conversation_id,
         )
-        if docs and docs[0].get("answer"):
-            return docs[0]["answer"]
+        return [
+            {"question": d.get("question", ""), "answer": d.get("answer", "")}
+            for d in docs
+        ]
     except Exception as exc:
         logger.warning(
-            "fetch_latest_answer_failed conversation_id=%s: %s",
-            conversation_id, exc,
+            "fetch_recent_chat_records_failed conversation_id=%s n=%d: %s",
+            conversation_id, n, exc,
         )
-    return ""
+    return []
 
 
 def format_ltm_context(ltm: LongTermMemoryRecord | None) -> str:

@@ -58,7 +58,6 @@ async def orchestrator_workflow(inp: OrchestratorInput) -> FinalResponse:
     session_context = inp.session_context
     ltm_context     = inp.ltm_context
     session         = inp.session
-    turn_texts      = inp.turn_texts
 
     bind_context(
         agent="orchestrator",
@@ -239,11 +238,7 @@ async def orchestrator_workflow(inp: OrchestratorInput) -> FinalResponse:
     # ── Path C: whole-chat summary ─────────────────────────────────────────────
     if _is_whole_chat_summary(user_query.text):
         logger.info("whole_chat_summary_activated query=%.60s", user_query.text)
-        summary_answer = (
-            await _summarize_whole_chat(session, turn_texts)
-            if session and turn_texts is not None
-            else "I don't have session context available to summarize this conversation."
-        )
+        summary_answer = await _summarize_whole_chat(user_query.conversation_id)
         return FinalResponse(
             status="success", answer=summary_answer,
             domain=domain, sources=[], confidence=1.0, attempts_used=0,

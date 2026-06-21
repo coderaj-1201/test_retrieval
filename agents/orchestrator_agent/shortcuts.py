@@ -20,7 +20,7 @@ import asyncio
 from shared.azure_clients import get_openai_client
 from shared.config import settings
 from shared.logging_config import get_logger
-from shared.models import SessionMemory
+from shared.memory import fetch_recent_chat_records
 from shared.retry import llm_retry
 from prompts import (
     PERSONALITY_SYSTEM,
@@ -93,42 +93,32 @@ async def _reformat_prior_answer(instruction: str, last_answer: str) -> str:
         return ""
 
 
-async def _summarize_whole_chat(
-    session: SessionMemory,
-    turn_texts: dict[str, dict[str, str]],
-) -> str:
+async def _summarize_whole_chat(conversation_id: str, n: int = 5) -> str:
     """
-    Summarize ALL turns stored in the session context window.
-
-    Leads with an explicit count statement so the user knows how many
-    questions are being covered.
+    Summarize the last `n` turns of the conversation by querying chat-history
+    directly. Newest records come back first, so we reverse for natural order.
 
     Args:
-        session:    Current SessionMemory (used for turn ordering).
-        turn_texts: Pre-fetched {question_id: {"question": …, "answer": …}}.
+        conversation_id: Active conversation partition key.
+        n:               How many recent turns to include (default 5).
 
     Returns:
         A summary string prefixed with a count statement.
     """
-    available_turns = [t for t in session.turns if t.question_id in turn_texts]
-    count = len(available_turns)
+    records = await fetch_recent_chat_records(conversation_id, n)
+    count = len(records)
 
     if count == 0:
         return "I don't have any previous questions from this session on record to summarize."
 
+    # Reverse to oldest-first for natural reading order.
+    ordered = list(reversed(records))
     numbered = "\n\n".join(
-        f"{i+1}. Q: {turn_texts[t.question_id]['question']}\n"
-        f"   A: {turn_texts[t.question_id]['answer']}"
-        for i, t in enumerate(available_turns)
+        f"{i+1}. Q: {r['question']}\n   A: {r['answer']}"
+        for i, r in enumerate(ordered)
     )
 
-    if count < settings.SESSION_MAX_TURNS:
-        preamble = (
-            f"Summarizing {count} question(s) from this session "
-            f"({count} on record, fewer than the {settings.SESSION_MAX_TURNS} maximum):"
-        )
-    else:
-        preamble = f"Summarizing your last {count} questions from this session:"
+    preamble = f"Summarizing your last {count} question(s) from this session:"
 
     @llm_retry
     def _call():
