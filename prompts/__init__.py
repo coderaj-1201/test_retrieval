@@ -7,10 +7,11 @@ Each module documents: which agent uses it, when it fires, and its purpose.
 Import from here rather than from individual submodules to keep call sites clean.
 
   from prompts import (
-      CLASSIFY_SYSTEM, CLASSIFY_FALLBACKS, STREAK_REMINDER, STREAK_REMINDER_FIRM,
+      CLASSIFY_SYSTEM, STREAK_REMINDER, STREAK_REMINDER_FIRM,
       REWRITE_SYSTEM,
       REFORMAT_SYSTEM, REFORMAT_VERBS,
       WHOLE_CHAT_SUMMARY_SYSTEM, WHOLE_CHAT_PHRASES,
+      PERSONALITY_SYSTEM,
       SYNTHESIS_SYSTEM,
       HYDE_SYSTEM,
       DECOMPOSE_SYSTEM,
@@ -20,7 +21,6 @@ Import from here rather than from individual submodules to keep call sites clean
 """
 
 from prompts.classify import (
-    CLASSIFY_FALLBACKS,
     STREAK_REMINDER,
     STREAK_REMINDER_FIRM,
     build_classify_system,
@@ -28,6 +28,7 @@ from prompts.classify import (
 from prompts.decompose import DECOMPOSE_SYSTEM
 from prompts.hyde import HYDE_SYSTEM
 from prompts.ltm_update import LTM_UPDATE_SYSTEM
+from prompts.personality import PERSONALITY_SYSTEM
 from prompts.reformat import REFORMAT_SYSTEM, REFORMAT_VERBS
 from prompts.synthesis import SYNTHESIS_SYSTEM
 from prompts.rewrite import REWRITE_SYSTEM
@@ -38,7 +39,6 @@ CLASSIFY_SYSTEM: str = build_classify_system()
 
 __all__ = [
     "CLASSIFY_SYSTEM",
-    "CLASSIFY_FALLBACKS",
     "STREAK_REMINDER",
     "STREAK_REMINDER_FIRM",
     "build_classify_system",
@@ -47,6 +47,7 @@ __all__ = [
     "REFORMAT_VERBS",
     "WHOLE_CHAT_SUMMARY_SYSTEM",
     "WHOLE_CHAT_PHRASES",
+    "PERSONALITY_SYSTEM",
     "SYNTHESIS_SYSTEM",
     "HYDE_SYSTEM",
     "DECOMPOSE_SYSTEM",

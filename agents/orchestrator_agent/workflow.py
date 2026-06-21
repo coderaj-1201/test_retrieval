@@ -31,6 +31,7 @@ from agents.orchestrator_agent.retrieval import (
 )
 from agents.orchestrator_agent.shortcuts import (
     _apply_streak_reminder,
+    _generate_personality_response,
     _is_reformat_command,
     _is_whole_chat_summary,
     _reformat_prior_answer,
@@ -156,10 +157,13 @@ async def orchestrator_workflow(inp: OrchestratorInput) -> FinalResponse:
                         show_citations=result.show_citations,
                         citations=result.citations,
                     )
-            # Retrieval found nothing — now deflect politely
+            # Retrieval found nothing — generate a personality-driven deflection
+            personality_msg = await _generate_personality_response(
+                user_query.text, response_type, session_context
+            )
             return FinalResponse(
                 status="out_of_scope",
-                answer=classification.deflection_message or "I couldn't find information on that. Feel free to ask about HR, IT, Legal, or Operations policies.",
+                answer=personality_msg,
                 domain=None, sources=[], confidence=0.0, attempts_used=settings.MAX_RETRIEVAL_ATTEMPTS,
                 conversation_id=user_query.conversation_id,
                 user_id=user_query.user_id,
@@ -168,7 +172,9 @@ async def orchestrator_workflow(inp: OrchestratorInput) -> FinalResponse:
                 response_type=response_type,
             )
 
-        message = classification.deflection_message
+        message = await _generate_personality_response(
+            user_query.text, response_type, session_context
+        )
         streak  = session.off_topic_streak if session else 0
 
         logger.info(

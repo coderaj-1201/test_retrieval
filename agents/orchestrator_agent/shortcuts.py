@@ -23,6 +23,7 @@ from shared.logging_config import get_logger
 from shared.models import SessionMemory
 from shared.retry import llm_retry
 from prompts import (
+    PERSONALITY_SYSTEM,
     REFORMAT_SYSTEM,
     REFORMAT_VERBS,
     REWRITE_SYSTEM,
@@ -186,3 +187,57 @@ async def _rewrite_query_if_needed(
     except Exception as exc:
         logger.warning("query_rewrite_failed query=%.60s: %s", query, exc)
     return query
+
+
+async def _generate_personality_response(
+    query: str,
+    response_type: str,
+    session_context: str = "",
+) -> str:
+    """
+    Generate a warm, characterful reply for out-of-scope messages.
+
+    Args:
+        query:           The user's original message.
+        response_type:   greeting / general / clarify / decision_making / offensive
+        session_context: Recent turns — helps clarify follow-ups and avoids
+                         repeating a greeting already given this session.
+
+    Returns:
+        A natural, personality-driven response string.
+        Falls back to a plain static string on LLM failure so Path A never errors.
+    """
+    _FALLBACKS = {
+        "greeting":        "Hey! I'm here for HR, IT, Legal, and Operations questions — what can I help with?",
+        "general":         "I'm an enterprise policy assistant — ask me anything about HR, IT, Legal, or Operations.",
+        "clarify":         "Could you clarify what you'd like to follow up on? Happy to help.",
+        "decision_making": "I can pull up relevant policies to help inform your decision — want me to?",
+        "offensive":       "That's not something I'll engage with. Policy questions only.",
+    }
+
+    user_content = f"response_type: {response_type}\n\nUser message: {query}"
+    if session_context:
+        user_content = f"response_type: {response_type}\n\nSession context:\n{session_context}\n\nUser message: {query}"
+
+    @llm_retry
+    def _call():
+        return get_openai_client().chat.completions.create(
+            model=settings.AZURE_OPENAI_CHAT_DEPLOYMENT,
+            messages=[
+                {"role": "system", "content": PERSONALITY_SYSTEM},
+                {"role": "user",   "content": user_content},
+            ],
+            temperature=0.7,
+            max_tokens=150,
+        )
+
+    try:
+        resp = await asyncio.to_thread(_call)
+        text = resp.choices[0].message.content.strip()
+        if text:
+            logger.info("personality_response_generated response_type=%s", response_type)
+            return text
+    except Exception as exc:
+        logger.warning("personality_response_failed response_type=%s: %s", response_type, exc)
+
+    return _FALLBACKS.get(response_type, _FALLBACKS["general"])

@@ -20,7 +20,7 @@ from shared.config import settings
 from shared.logging_config import get_logger
 from shared.models import ClassifyInput, Domain, RetrievalTool
 from shared.retry import llm_retry
-from prompts import CLASSIFY_SYSTEM, CLASSIFY_FALLBACKS
+from prompts import CLASSIFY_SYSTEM
 
 logger = get_logger(__name__)
 
@@ -30,7 +30,7 @@ class ClassifyResult:
 
     __slots__ = (
         "domain", "domain_confidence", "secondary_domain", "tool", "failed",
-        "out_of_scope", "deflection_message", "is_followup", "response_type",
+        "out_of_scope", "is_followup", "response_type",
     )
 
     def __init__(
@@ -41,7 +41,6 @@ class ClassifyResult:
         tool: RetrievalTool,
         failed: bool = False,
         out_of_scope: bool = False,
-        deflection_message: str = "",
         is_followup: bool = False,
         response_type: str = "decline",
     ) -> None:
@@ -51,7 +50,6 @@ class ClassifyResult:
         self.tool = tool
         self.failed = failed
         self.out_of_scope = out_of_scope
-        self.deflection_message = deflection_message
         self.is_followup = is_followup
         self.response_type = response_type
 
@@ -103,9 +101,6 @@ async def classify_query(inp: ClassifyInput) -> ClassifyResult:
 
     if domain_raw in _OUT_OF_SCOPE:
         response_type = (raw.get("response_type") or "decline").lower()
-        deflection_message = str(raw.get("deflection_message") or "").strip()
-        if not deflection_message:
-            deflection_message = CLASSIFY_FALLBACKS.get(response_type, CLASSIFY_FALLBACKS["decline"])
         logger.info(
             "classify_out_of_scope query_preview=%.60s response_type=%s",
             inp.query, response_type,
@@ -113,7 +108,6 @@ async def classify_query(inp: ClassifyInput) -> ClassifyResult:
         return ClassifyResult(
             None, 0.0, None, RetrievalTool.HYBRID,
             out_of_scope=True,
-            deflection_message=deflection_message,
             response_type=response_type,
         )
 
