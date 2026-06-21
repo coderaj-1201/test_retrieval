@@ -2,7 +2,7 @@
 prompts/ltm_update.py
 ──────────────────────
 Prompt: Long-Term Memory Updater
-Used by: sahres/memory.py → update_ltm()
+Used by: shared/memory.py → update_ltm()
 Fires:   Every LTM_SUMMARY_EVERY_N turns (default: 5) as a background task.
          Non-blocking — does not affect response latency.
 
@@ -22,5 +22,5 @@ LTM_UPDATE_SYSTEM = (
     "role or team, recurring topics they ask about, preferences, and important "
     "context from their work. "
     "Discard redundant or outdated facts. "
-    "Return ONLY valid JSON: {{\"summary\": \"...\", \"key_facts\": [\"...\", ...]}}"
+    'Return ONLY valid JSON: {"summary": "...", "key_facts": ["...", ...]}'
 )

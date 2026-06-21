@@ -92,7 +92,7 @@ RETURN ONLY JSON (no markdown fences, no extra text):
   "secondary_domain": "{domain_values}|none",
   "tool": "hybrid|hyde|decomposition",
   "is_followup": true|false,
-  "response_type": "greeting|general|clarify|decision_making|offensive|decline",
+  "response_type": "greeting|general|clarify|decision_making|offensive|decline|null",
   "deflection_message": "<only when domain=none — see rules below>",
   "reason": "<one short phrase>"
 }}
@@ -136,7 +136,7 @@ as the most recent prior turn and set is_followup=true. These are valid follow-u
 instructions, not out-of-scope queries.
 
 ─────────────────────────────────────────────────────────────────────
-RESPONSE_TYPE (only when domain=none)
+RESPONSE_TYPE (only when domain=none; set null when domain is set)
 ─────────────────────────────────────────────────────────────────────
   greeting       — "hi", "hello", "thanks", "bye", "good morning", etc.
   general        — "what can you do?", "who are you?", "help", capability questions

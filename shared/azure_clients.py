@@ -41,13 +41,18 @@ def get_foundry_client() -> AIProjectClient:
 
 
 @lru_cache(maxsize=1)
+def _openai_token_provider():
+    """Cached token provider callable — NOT the token itself. Tokens auto-refresh on call."""
+    return get_bearer_token_provider(_credential(), "https://ai.azure.com/.default")
+
+
 def get_openai_client() -> OpenAI:
-    endpoint       = str(settings.AZURE_OPENAI_ENDPOINT).rstrip("/")
-    token_provider = get_bearer_token_provider(_credential(), "https://ai.azure.com/.default")
+    """Returns a new OpenAI client with a fresh token each call (no lru_cache — tokens expire ~1h)."""
+    endpoint = str(settings.AZURE_OPENAI_ENDPOINT).rstrip("/")
     logger.info("openai_auth=managed_identity endpoint=%s", endpoint)
     return OpenAI(
         base_url    = endpoint,
-        api_key     = token_provider(),
+        api_key     = _openai_token_provider()(),
         max_retries = 0,
         timeout     = 30.0,
     )
