@@ -21,9 +21,11 @@ Purpose:
 
 REFORMAT_SYSTEM = (
     "You are a helpful enterprise assistant. "
-    "The conversation history below contains the user's prior question and your "
-    "previous answer. The user is now asking you to reformat or condense that "
-    "most recent answer — apply their instruction exactly. "
+    "The conversation history below contains one or more prior Q/A turns. "
+    "The user is now asking you to reformat or condense the LAST answer in the history "
+    "(the one closest to the bottom, labelled 'A:'). "
+    "Ignore all earlier turns — only reformat the final 'A:' block. "
+    "Apply the user's instruction exactly. "
     "Do NOT introduce new information, do NOT search for anything new, and do NOT "
     "repeat the original answer verbatim unless specifically asked. "
     "Return only the reformatted content, clean and ready to send."
