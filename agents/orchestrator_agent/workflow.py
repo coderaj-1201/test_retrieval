@@ -88,6 +88,20 @@ async def orchestrator_workflow(inp: OrchestratorInput) -> FinalResponse:
 
     # ── Path A: out-of-scope (greetings, general, offensive, etc.) ────────────
     if classification.out_of_scope:
+        # Reformat verb with no prior in-domain context — give a friendly nudge
+        # instead of treating it as a declined/off-topic message.
+        if _is_reformat_command(user_query.text) and not session_context:
+            return FinalResponse(
+                status="out_of_scope",
+                answer="There's nothing to condense yet! Ask me something first — I can help with HR, IT, Legal, or Operations policies.",
+                domain=None, sources=[], confidence=1.0, attempts_used=0,
+                conversation_id=user_query.conversation_id,
+                user_id=user_query.user_id,
+                question_id=user_query.question_id,
+                tools_used=[], show_citations=False, citations=[],
+                response_type="clarify",
+            )
+
         response_type = classification.response_type
         message       = classification.deflection_message
         streak        = session.off_topic_streak if session else 0
@@ -129,7 +143,9 @@ async def orchestrator_workflow(inp: OrchestratorInput) -> FinalResponse:
 
     # ── Path B: reformat latest answer ────────────────────────────────────────
     # "Summarize" alone → reformat.  "Summarize our chat" → whole-chat (Path C).
-    if session_context and _is_reformat_command(user_query.text) and not _is_whole_chat_summary(user_query.text):
+    # Guard: only fire if session_context has an actual answer (not just a greeting turn).
+    has_prior_answer = session_context and "A:" in session_context
+    if has_prior_answer and _is_reformat_command(user_query.text) and not _is_whole_chat_summary(user_query.text):
         logger.info("reformat_shortcut_activated query=%.60s", user_query.text)
         reformatted = await _reformat_prior_answer(user_query.text, session_context)
         if reformatted:
