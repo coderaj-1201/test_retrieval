@@ -29,6 +29,7 @@ from shared.cosmos_client import get_chat_container, upsert_document
 from shared.logging_config import get_logger
 from shared.memory import (
     append_turn,
+    fetch_latest_answer,
     fetch_turn_texts,
     format_ltm_context,
     format_session_context,
@@ -198,8 +199,12 @@ async def main_agent_workflow(user_query: UserQuery) -> QueryResponse:
     turn_texts = await fetch_turn_texts(user_query.conversation_id, all_question_ids)
     session_context = format_session_context(session, turn_texts)
 
-    # session.last_answer holds the full text of the previous response, persisted
-    # to Cosmos by append_turn. Reliable across replicas and after restarts.
+    # Fetch most recent answer directly from chat-history (partitioned by conversation_id,
+    # ordered by _ts DESC). This is always consistent: chat-history is written
+    # synchronously before the response is returned to the user, so by the time
+    # the user types a follow-up the record is guaranteed to be in Cosmos.
+    # Avoids replica-skew on _session_cache and stale session.last_answer values.
+    _last_answer = await fetch_latest_answer(user_query.conversation_id)
     try:
         final: FinalResponse = await call_orchestrator(OrchestratorInput(
             user_query=user_query,
@@ -207,7 +212,7 @@ async def main_agent_workflow(user_query: UserQuery) -> QueryResponse:
             ltm_context=format_ltm_context(ltm),
             session=session,
             turn_texts=turn_texts,
-            last_answer=session.last_answer,
+            last_answer=_last_answer,
         ))
     except Exception as exc:
         logger.error("orchestrator_call_failed: %s", exc, exc_info=True)

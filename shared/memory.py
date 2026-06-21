@@ -336,6 +336,31 @@ async def update_ltm(user_id: str, session: SessionMemory) -> None:
     logger.info("ltm_updated user_id=%s facts=%d", user_id, len(key_facts))
 
 
+async def fetch_latest_answer(conversation_id: str) -> str:
+    """
+    Query the chat-history container for the most recent non-empty answer
+    in this conversation. Uses _ts DESC so it always reflects the answer
+    the user just saw — bypassing session cache and replica skew entirely.
+    """
+    query = "SELECT TOP 1 c.answer FROM c ORDER BY c._ts DESC"
+    try:
+        docs = await asyncio.to_thread(
+            query_documents,
+            get_chat_container(),
+            query,
+            [],
+            partition_key=conversation_id,
+        )
+        if docs and docs[0].get("answer"):
+            return docs[0]["answer"]
+    except Exception as exc:
+        logger.warning(
+            "fetch_latest_answer_failed conversation_id=%s: %s",
+            conversation_id, exc,
+        )
+    return ""
+
+
 def format_ltm_context(ltm: LongTermMemoryRecord | None) -> str:
     """Render LTM as a compact string for prompt injection."""
     if not ltm or not ltm.summary:
