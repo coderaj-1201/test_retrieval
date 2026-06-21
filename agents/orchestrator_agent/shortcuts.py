@@ -61,13 +61,13 @@ def _apply_streak_reminder(message: str, streak: int) -> str:
     return message
 
 
-async def _reformat_prior_answer(instruction: str, session_context: str) -> str:
+async def _reformat_prior_answer(instruction: str, last_answer: str) -> str:
     """
-    Reformat the most recent answer using the user's instruction.
+    Reformat a specific answer using the user's instruction.
 
     Args:
-        instruction:     The user's reformat request (e.g. "make it shorter").
-        session_context: Formatted session context containing the prior answer.
+        instruction: The user's reformat request (e.g. "make it shorter").
+        last_answer: The exact answer text to reformat (extracted by ID — no LLM guessing).
 
     Returns:
         Reformatted text, or empty string on failure (caller falls through to retrieval).
@@ -78,7 +78,7 @@ async def _reformat_prior_answer(instruction: str, session_context: str) -> str:
             model=settings.AZURE_OPENAI_CHAT_DEPLOYMENT,
             messages=[
                 {"role": "system", "content": REFORMAT_SYSTEM},
-                {"role": "user",   "content": f"{session_context}\n\nInstruction: {instruction}"},
+                {"role": "user",   "content": f"Answer to reformat:\n{last_answer}\n\nInstruction: {instruction}"},
             ],
             temperature=0,
             max_tokens=500,

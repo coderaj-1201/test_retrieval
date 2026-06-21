@@ -89,7 +89,9 @@ async def orchestrator_workflow(inp: OrchestratorInput) -> FinalResponse:
     # ── Path A: out-of-scope (greetings, general, offensive, etc.) ────────────
     if classification.out_of_scope:
         # Reformat verb with no prior in-domain context — give a friendly nudge.
-        if _is_reformat_command(user_query.text) and not session_context:
+        _has_prior_turn = bool(session and turn_texts and session.turns and
+                               any(turn_texts.get(t.question_id, {}).get("answer") for t in session.turns))
+        if _is_reformat_command(user_query.text) and not _has_prior_turn:
             return FinalResponse(
                 status="out_of_scope",
                 answer="There's nothing to condense yet! Ask me something first — I can help with HR, IT, Legal, or Operations policies.",
@@ -207,11 +209,19 @@ async def orchestrator_workflow(inp: OrchestratorInput) -> FinalResponse:
 
     # ── Path B: reformat latest answer ────────────────────────────────────────
     # "Summarize" alone → reformat.  "Summarize our chat" → whole-chat (Path C).
-    # Guard: only fire if session_context has an actual answer (not just a greeting turn).
-    has_prior_answer = session_context and "A:" in session_context
-    if has_prior_answer and _is_reformat_command(user_query.text) and not _is_whole_chat_summary(user_query.text):
+    # Extract the last turn's answer by question_id — never parse the context blob.
+    _last_answer: str | None = None
+    if session and turn_texts and session.turns:
+        for t in reversed(session.turns):
+            texts = turn_texts.get(t.question_id)
+            if texts and texts.get("answer"):
+                _last_answer = texts["answer"]
+                logger.debug("reformat_last_turn_id=%s", t.question_id)
+                break
+
+    if _last_answer and _is_reformat_command(user_query.text) and not _is_whole_chat_summary(user_query.text):
         logger.info("reformat_shortcut_activated query=%.60s", user_query.text)
-        reformatted = await _reformat_prior_answer(user_query.text, session_context)
+        reformatted = await _reformat_prior_answer(user_query.text, _last_answer)
         if reformatted:
             return FinalResponse(
                 status="success", answer=reformatted,
