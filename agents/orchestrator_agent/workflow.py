@@ -88,8 +88,7 @@ async def orchestrator_workflow(inp: OrchestratorInput) -> FinalResponse:
 
     # ── Path A: out-of-scope (greetings, general, offensive, etc.) ────────────
     if classification.out_of_scope:
-        # Reformat verb with no prior in-domain context — give a friendly nudge
-        # instead of treating it as a declined/off-topic message.
+        # Reformat verb with no prior in-domain context — give a friendly nudge.
         if _is_reformat_command(user_query.text) and not session_context:
             return FinalResponse(
                 status="out_of_scope",
@@ -103,15 +102,80 @@ async def orchestrator_workflow(inp: OrchestratorInput) -> FinalResponse:
             )
 
         response_type = classification.response_type
-        message       = classification.deflection_message
-        streak        = session.off_topic_streak if session else 0
+
+        # ── "decline" queries go to retrieval — the doc store may have the answer ──
+        # Only pure greetings, general capability, and offensive messages skip retrieval.
+        _HARD_OOS = {"greeting", "general", "offensive"}
+        if response_type not in _HARD_OOS:
+            # Use secondary_domain if available, otherwise default to OPS.
+            fallback_domain = (
+                classification.secondary_domain
+                or Domain.OPS
+            )
+            logger.info(
+                "decline_routed_to_retrieval response_type=%s fallback_domain=%s query=%.60s",
+                response_type, fallback_domain, user_query.text,
+            )
+            # Fall through to retrieval with fallback domain.
+            domain            = fallback_domain
+            secondary_domain  = None
+            domain_confidence = 0.5
+            is_cross_domain   = False
+            search_query      = user_query.text
+            last_result: RetrievalResult | None = None
+            tools_tried: list[str] = []
+            for attempt_idx in range(settings.MAX_RETRIEVAL_ATTEMPTS):
+                idx     = min(attempt_idx, len(_TOOL_LADDER) - 1)
+                tool    = _TOOL_LADDER[idx]
+                attempt = attempt_idx + 1
+                tools_tried.append(tool.value)
+                record_tool(tool=tool.value, domain=domain.value)
+                primary_req = OrchestratorRequest(
+                    query=search_query, domain=domain, tool=tool, attempt=attempt,
+                    conversation_id=user_query.conversation_id,
+                    user_id=user_query.user_id,
+                    question_id=user_query.question_id,
+                    session_context=session_context,
+                    ltm_context=ltm_context,
+                )
+                try:
+                    result = await call_retrieval(primary_req)
+                except Exception as exc:
+                    logger.error("decline_retrieval_failed attempt=%d: %s", attempt, exc)
+                    continue
+                last_result = result
+                if result.passed:
+                    return FinalResponse(
+                        status="success", answer=result.answer,
+                        domain=domain, sources=result.sources,
+                        confidence=result.confidence, attempts_used=attempt,
+                        conversation_id=user_query.conversation_id,
+                        user_id=user_query.user_id,
+                        question_id=user_query.question_id,
+                        tools_used=tools_tried,
+                        show_citations=result.show_citations,
+                        citations=result.citations,
+                    )
+            # Retrieval found nothing — now deflect politely
+            return FinalResponse(
+                status="out_of_scope",
+                answer=classification.deflection_message or "I couldn't find information on that. Feel free to ask about HR, IT, Legal, or Operations policies.",
+                domain=None, sources=[], confidence=0.0, attempts_used=settings.MAX_RETRIEVAL_ATTEMPTS,
+                conversation_id=user_query.conversation_id,
+                user_id=user_query.user_id,
+                question_id=user_query.question_id,
+                tools_used=tools_tried, show_citations=False, citations=[],
+                response_type=response_type,
+            )
+
+        message = classification.deflection_message
+        streak  = session.off_topic_streak if session else 0
 
         logger.info(
             "classify_out_of_scope response_type=%s streak=%d query_preview=%.60s",
             response_type, streak, user_query.text,
         )
 
-        # Greetings are exempt — no streak reminder, no streak increment.
         if response_type not in _STREAK_EXEMPT_TYPES:
             message = _apply_streak_reminder(message, streak)
 
