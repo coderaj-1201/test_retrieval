@@ -98,6 +98,7 @@ async def load_session(conversation_id: str, user_id: str) -> SessionMemory:
             user_id          = user_id,
             turns            = turns,
             off_topic_streak = int(doc.get("off_topic_streak", 0)),
+            last_answer      = doc.get("last_answer", ""),
             created_at       = doc.get("created_at", datetime.now(timezone.utc).isoformat()),
             updated_at       = doc.get("updated_at", datetime.now(timezone.utc).isoformat()),
         )
@@ -114,6 +115,7 @@ async def append_turn(
     *,
     is_in_domain: bool,
     is_greeting: bool = False,
+    last_answer: str = "",
 ) -> None:
     """
     Append a turn pointer, update the off_topic_streak, trim to window, persist.
@@ -122,6 +124,9 @@ async def append_turn(
       - Successful in-domain answer  → reset streak to 0
       - Greeting response            → streak unchanged (greetings are fine)
       - Any other out-of-scope       → increment streak
+
+    last_answer is stored on the session so the NEXT request can read the
+    previous answer reliably — works across replicas and after restarts.
     """
     session.turns.append(turn)
     if len(session.turns) > settings.SESSION_MAX_TURNS:
@@ -131,6 +136,9 @@ async def append_turn(
         session.off_topic_streak = 0
     elif not is_greeting:
         session.off_topic_streak += 1
+
+    if last_answer:
+        session.last_answer = last_answer
 
     session.updated_at = datetime.now(timezone.utc).isoformat()
     await _session_cache.set(session.conversation_id, session)

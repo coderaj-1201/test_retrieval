@@ -314,6 +314,11 @@ class SessionMemory:
     # Reset to 0 on any successful in-domain answer.
     # Used to append a purpose reminder after 3+ off-topic exchanges.
     off_topic_streak: int = 0
+    # Full text of the most recent answer returned to the user.
+    # Persisted to Cosmos so it survives replica switches and restarts.
+    # Read at the START of each request (before orchestrator call) so the
+    # orchestrator reformat shortcut always has the correct previous answer.
+    last_answer:     str = ""
     created_at:      str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at:      str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -325,6 +330,7 @@ class SessionMemory:
             "user_id":          self.user_id,
             "turns":            [t.to_dict() for t in self.turns],
             "off_topic_streak": self.off_topic_streak,
+            "last_answer":      self.last_answer,
             "created_at":       self.created_at,
             "updated_at":       self.updated_at,
             "type":             "session",
