@@ -55,6 +55,13 @@ logger = get_logger(__name__)
 # Using a module-level reference avoids importing `app` (circular).
 _http: httpx.AsyncClient | None = None
 
+# In-process cache of the most recent answer per conversation.
+# Keyed by conversation_id → {question_id, answer}.
+# Prevents Cosmos read-after-write lag from causing reformat to pick the wrong answer:
+# after call_orchestrator returns we store the answer here; the NEXT request reads it
+# as last_answer before fetch_turn_texts catches up.
+_recent_answer_cache: dict[str, dict] = {}
+
 _orchestrator_breaker = CircuitBreaker(
     name="orchestrator-agent", fail_max=3, reset_timeout=30
 )
@@ -198,10 +205,14 @@ async def main_agent_workflow(user_query: UserQuery) -> QueryResponse:
     turn_texts = await fetch_turn_texts(user_query.conversation_id, all_question_ids)
     session_context = format_session_context(session, turn_texts)
 
-    # Extract the most recent answer by ID so orchestrator reformat shortcut
-    # gets the exact text without parsing the multi-turn context string.
+    # Extract the most recent answer for the reformat shortcut.
+    # Priority: in-process cache (set after previous response returned) over
+    # turn_texts from Cosmos, which may lag by one request due to read-after-write.
     _last_answer = ""
-    if session.turns and turn_texts:
+    cached = _recent_answer_cache.get(user_query.conversation_id)
+    if cached:
+        _last_answer = cached["answer"]
+    elif session.turns and turn_texts:
         for t in reversed(session.turns):
             texts = turn_texts.get(t.question_id, {})
             if texts.get("answer"):
@@ -233,6 +244,14 @@ async def main_agent_workflow(user_query: UserQuery) -> QueryResponse:
             sources=[],
             escalation_options=None,
         )
+
+    # Cache this answer so the very next request gets the right last_answer
+    # even if Cosmos read-after-write hasn't caught up yet.
+    if final.answer and final.status != "error":
+        _recent_answer_cache[user_query.conversation_id] = {
+            "question_id": user_query.question_id,
+            "answer":      final.answer,
+        }
 
     # "error" means no usable model output at all; "failure" still has an answer.
     has_answer = final.status != "error"
