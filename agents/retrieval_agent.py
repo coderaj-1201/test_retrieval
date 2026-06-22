@@ -247,22 +247,29 @@ async def synthesize_answer(inp: SynthesisInput) -> tuple[str, float, list[Sourc
         show_citations = False
         llm_citations  = []
 
-    # Build SourceDocument list from search results for compatibility with the
-    # existing pipeline. The LLM citations (with per-doc confidence) are passed
-    # separately so the card renderer can display confidence badges.
-    seen_urls:   set[str] = set()
-    seen_titles: set[str] = set()
+    # Build SourceDocument list from search results.
+    # Deduplicate by title; if we see the same title again with a URL and the
+    # previously recorded entry had no URL, upgrade it (parent chunks are fetched
+    # after child chunks and tend to carry the doc_url field).
+    seen_titles: dict[str, int] = {}   # title -> index in sources list
     sources: list[SourceDocument] = []
     for d in all_docs:
-        if len(sources) >= settings.SYNTHESIS_MAX_SOURCES:
+        if len(sources) >= settings.SYNTHESIS_MAX_SOURCES and d.source not in seen_titles:
             break
         url   = getattr(d, "doc_url", "") or ""
         title = d.source
-        if (url and url in seen_urls) or title in seen_titles:
+        if title in seen_titles:
+            # Upgrade existing entry if it was missing a URL and this doc has one.
+            idx = seen_titles[title]
+            if url and not sources[idx].url:
+                sources[idx] = SourceDocument(
+                    title=title,
+                    excerpt=sources[idx].excerpt,
+                    url=url,
+                    relevance=sources[idx].relevance,
+                )
             continue
-        if url:
-            seen_urls.add(url)
-        seen_titles.add(title)
+        seen_titles[title] = len(sources)
         sources.append(SourceDocument(
             title=title,
             excerpt=d.content[:200],
