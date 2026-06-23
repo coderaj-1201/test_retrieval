@@ -75,7 +75,7 @@ async def orchestrate(raw: Request) -> Response:
     when calling the workflow from within the same process (test/direct use).
     Over HTTP (normal production path) session and turn_texts arrive as None.
     """
-    from agents.orchestrator_agent.workflow import orchestrator_workflow
+    from agents.orchestrator_agent.workflow import run_orchestrator
 
     body        = await raw.json()
     session_ctx = body.pop("session_context", "")
@@ -96,7 +96,7 @@ async def orchestrate(raw: Request) -> Response:
     )
 
     try:
-        result_obj = await orchestrator_workflow.run(OrchestratorInput(
+        final: FinalResponse = await run_orchestrator(OrchestratorInput(
             user_query=user_query,
             session_context=session_ctx,
             ltm_context=ltm_ctx,
@@ -104,14 +104,6 @@ async def orchestrate(raw: Request) -> Response:
             turn_texts=None,
             last_answer=last_answer,
         ))
-        outputs = result_obj.get_outputs()
-        final: FinalResponse = outputs[0] if outputs else FinalResponse(
-            status="failure", answer="",
-            domain=None,
-            conversation_id=user_query.conversation_id,
-            user_id=user_query.user_id,
-            question_id=user_query.question_id,
-        )
     except Exception as exc:
         logger.error("orchestrate_endpoint_error: %s", exc, exc_info=True)
         final = FinalResponse(

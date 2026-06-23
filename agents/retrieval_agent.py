@@ -284,8 +284,7 @@ async def synthesize_answer(inp: SynthesisInput) -> tuple[str, float, list[Sourc
     return answer, confidence, sources, show_citations, llm_citations
 
 
-@workflow(name="retrieval_workflow")
-async def retrieval_workflow(request: OrchestratorRequest) -> RetrievalResult:
+async def run_retrieval(request: OrchestratorRequest) -> RetrievalResult:
     bind_context(
         agent="retrieval",
         conversation_id=request.conversation_id,
@@ -366,6 +365,9 @@ async def lifespan(_app: FastAPI):
     logger.info("retrieval_agent_started environment=%s", settings.ENVIRONMENT)
     yield
     logger.info("retrieval_agent_stopped")
+
+
+retrieval_workflow = workflow(name="retrieval_workflow")(run_retrieval)
 
 
 def _register_sigterm():
@@ -453,14 +455,7 @@ async def retrieve(raw: Request) -> Response:
     )
 
     try:
-        result_obj = await retrieval_workflow.run(request)
-        outputs    = result_obj.get_outputs()
-        result: RetrievalResult = outputs[0] if outputs else RetrievalResult(
-            query=request.query, domain=request.domain, tool=request.tool,
-            attempt=request.attempt, answer="Internal error.", confidence=0.0,
-            sources=[], conversation_id=request.conversation_id,
-            user_id=request.user_id, question_id=request.question_id,
-        )
+        result: RetrievalResult = await run_retrieval(request)
     except Exception as exc:
         logger.error("retrieve_endpoint_unhandled_error: %s", exc, exc_info=True)
         result = RetrievalResult(

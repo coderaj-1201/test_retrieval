@@ -21,7 +21,7 @@ from shared.models import QueryResponse, UserQuery
 from shared.rate_limiter import RateLimitExceeded, check_rate_limit
 
 from agents.main_agent.schemas import QueryBody
-from agents.main_agent.workflow import main_agent_workflow
+from agents.main_agent.workflow import run_main_agent
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -80,22 +80,7 @@ async def query(body: QueryBody) -> Response:
     )
     logger.info("query_received text_preview=%.80s", body.text)
 
-    result_obj = await main_agent_workflow.run(user_query)
-    outputs = result_obj.get_outputs()
-    response: QueryResponse = outputs[0] if outputs else QueryResponse(
-        question_id=user_query.question_id,
-        answer_id="",
-        conversation_id=conversation_id,
-        user_id=body.user_id,
-        status="error",
-        answer="Internal error.",
-        domain="",
-        confidence=0.0,
-        attempts_used=0,
-        tools_used=[],
-        sources=[],
-        escalation_options=None,
-    )
+    response: QueryResponse = await run_main_agent(user_query)
 
     logger.info(
         "query_complete question_id=%s status=%s confidence=%.3f",

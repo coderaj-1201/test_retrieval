@@ -45,8 +45,7 @@ logger = get_logger(__name__)
 _TOOL_LADDER = [RetrievalTool.HYBRID, RetrievalTool.HYDE, RetrievalTool.DECOMPOSITION]
 
 
-@workflow(name="orchestrator_workflow")
-async def orchestrator_workflow(inp: OrchestratorInput) -> FinalResponse:
+async def run_orchestrator(inp: OrchestratorInput) -> FinalResponse:
     """
     Route a user query to the appropriate handler and return a FinalResponse.
 
@@ -356,3 +355,6 @@ async def orchestrator_workflow(inp: OrchestratorInput) -> FinalResponse:
         citations=last_result.citations if last_result else [],
         tools_used=tools_tried,
     )
+
+
+orchestrator_workflow = workflow(name="orchestrator_workflow")(run_orchestrator)

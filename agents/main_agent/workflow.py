@@ -155,8 +155,7 @@ async def call_orchestrator(inp: OrchestratorInput) -> FinalResponse:
         raise
 
 
-@workflow(name="main_agent_workflow")
-async def main_agent_workflow(user_query: UserQuery) -> QueryResponse:
+async def run_main_agent(user_query: UserQuery) -> QueryResponse:
     """
     Top-level workflow for every user query.
 
@@ -299,6 +298,12 @@ async def main_agent_workflow(user_query: UserQuery) -> QueryResponse:
         task.add_done_callback(_ltm_task_done_callback)
 
     return response
+
+
+# Keep the @workflow-wrapped singleton for framework observability (tracing/metrics).
+# query.py calls run_main_agent() directly so concurrent requests each get a fresh
+# coroutine rather than fighting over this singleton.
+main_agent_workflow = workflow(name="main_agent_workflow")(run_main_agent)
 
 
 def _ltm_task_done_callback(task: asyncio.Task) -> None:
