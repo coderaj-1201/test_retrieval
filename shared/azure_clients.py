@@ -97,15 +97,21 @@ def get_claude_client():
         logger.error("anthropic package not installed — cannot use Claude routing")
         return None
 
-    endpoint         = str(settings.CLAUDE_ENDPOINT).rstrip("/")
-    token_provider   = _claude_token_provider()
-    client           = _claude_client_cache.get("client")
+    endpoint = str(settings.CLAUDE_ENDPOINT).rstrip("/")
+    client   = _claude_client_cache.get("client")
     if client is None:
-        logger.info("claude_auth=managed_identity endpoint=%s", endpoint)
-        client = AnthropicFoundry(
-            base_url              = endpoint,
-            azure_ad_token_provider = token_provider,
-        )
+        if settings.CLAUDE_API_KEY:
+            logger.info("claude_auth=api_key endpoint=%s", endpoint)
+            client = AnthropicFoundry(
+                api_key  = settings.CLAUDE_API_KEY.get_secret_value(),
+                base_url = endpoint,
+            )
+        else:
+            logger.info("claude_auth=managed_identity endpoint=%s", endpoint)
+            client = AnthropicFoundry(
+                azure_ad_token_provider = _claude_token_provider(),
+                base_url                = endpoint,
+            )
         _claude_client_cache["client"] = client
     return client
 

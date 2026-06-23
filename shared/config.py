@@ -54,8 +54,13 @@ class Settings(BaseSettings):
     # ── Claude (complex query routing) ────────────────────────────────────────
     # Set CLAUDE_ENDPOINT to the Azure AI Foundry model inference endpoint for
     # Claude. If unset, all queries fall back to AZURE_OPENAI_CHAT_DEPLOYMENT.
-    CLAUDE_ENDPOINT:          AnyHttpUrl | None = None
-    CLAUDE_CHAT_DEPLOYMENT:   str               = "claude-sonnet-4-6"
+    # Auth: CLAUDE_API_KEY takes priority over managed identity.
+    # Managed identity requires "Cognitive Services User" role on the resource —
+    # if that role cannot be assigned, set CLAUDE_API_KEY instead.
+    # Store CLAUDE_API_KEY in Key Vault, inject via ACA secret reference.
+    CLAUDE_ENDPOINT:        AnyHttpUrl | None = None
+    CLAUDE_CHAT_DEPLOYMENT: str               = "claude-sonnet-4-6"
+    CLAUDE_API_KEY:         SecretStr | None  = None
 
     # ── Azure AI Search ────────────────────────────────────────────────────────
     AZURE_SEARCH_ENDPOINT: AnyHttpUrl | None = None
