@@ -45,6 +45,20 @@ logger = get_logger(__name__)
 _TOOL_LADDER = [RetrievalTool.HYBRID, RetrievalTool.HYDE, RetrievalTool.DECOMPOSITION]
 
 
+def _resolve_tool(classified_tool: RetrievalTool, attempt_idx: int) -> RetrievalTool:
+    """
+    Attempt 1: use the classifier's tool directly.
+    Attempt 2+: walk the ladder from HYBRID upward, but never go below the
+                classified tool (e.g. if classifier said DECOMPOSITION, never
+                downgrade to HYBRID on a retry).
+    """
+    if attempt_idx == 0:
+        return classified_tool
+    ladder_start = max(0, _TOOL_LADDER.index(classified_tool))
+    idx = min(ladder_start + (attempt_idx - 1), len(_TOOL_LADDER) - 1)
+    return _TOOL_LADDER[idx]
+
+
 async def run_orchestrator(inp: OrchestratorInput) -> FinalResponse:
     """
     Route a user query to the appropriate handler and return a FinalResponse.
@@ -147,8 +161,7 @@ async def run_orchestrator(inp: OrchestratorInput) -> FinalResponse:
             last_result: RetrievalResult | None = None
             tools_tried: list[str] = []
             for attempt_idx in range(settings.MAX_RETRIEVAL_ATTEMPTS):
-                idx     = min(attempt_idx, len(_TOOL_LADDER) - 1)
-                tool    = _TOOL_LADDER[idx]
+                tool    = _resolve_tool(RetrievalTool.HYBRID, attempt_idx)
                 attempt = attempt_idx + 1
                 tools_tried.append(tool.value)
                 record_tool(tool=tool.value, domain=domain.value)
@@ -256,8 +269,7 @@ async def run_orchestrator(inp: OrchestratorInput) -> FinalResponse:
     tools_tried: list[str] = []
 
     for attempt_idx in range(settings.MAX_RETRIEVAL_ATTEMPTS):
-        idx     = min(attempt_idx, len(_TOOL_LADDER) - 1)
-        tool    = _TOOL_LADDER[idx]
+        tool    = _resolve_tool(classification.tool, attempt_idx)
         attempt = attempt_idx + 1
         tools_tried.append(tool.value)
 
