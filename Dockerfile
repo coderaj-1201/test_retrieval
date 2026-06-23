@@ -65,5 +65,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
 CMD uvicorn ${SERVICE_MODULE} \
         --host 0.0.0.0 \
         --port ${SERVICE_PORT} \
-        --workers 1 \
+        --workers ${UVICORN_WORKERS:-4} \
         --no-access-log

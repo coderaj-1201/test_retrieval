@@ -47,15 +47,31 @@ def _openai_token_provider():
 
 
 def get_openai_client() -> OpenAI:
-    """Returns a new OpenAI client with a fresh token each call (no lru_cache — tokens expire ~1h)."""
+    """
+    Returns a cached OpenAI client. The managed-identity token is fetched fresh
+    on each call via the token provider (tokens are cached internally by the
+    azure-identity SDK for ~1h and auto-refreshed), but the heavy client object
+    is not re-created on every call.
+    """
     endpoint = str(settings.AZURE_OPENAI_ENDPOINT).rstrip("/")
-    logger.info("openai_auth=managed_identity endpoint=%s", endpoint)
-    return OpenAI(
-        base_url    = endpoint,
-        api_key     = _openai_token_provider()(),
-        max_retries = 0,
-        timeout     = 30.0,
-    )
+    token = _openai_token_provider()()   # cheap — SDK returns cached token until near expiry
+    client = _openai_client_cache.get("client")
+    if client is None:
+        logger.info("openai_auth=managed_identity endpoint=%s", endpoint)
+        client = OpenAI(
+            base_url    = endpoint,
+            api_key     = token,
+            max_retries = 0,
+            timeout     = 30.0,
+        )
+        _openai_client_cache["client"] = client
+    else:
+        # Refresh the api_key in-place so it always holds a valid token.
+        client.api_key = token
+    return client
+
+
+_openai_client_cache: dict = {}
 
 
 @lru_cache(maxsize=1)

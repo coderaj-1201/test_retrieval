@@ -61,8 +61,8 @@ async def lifespan(_app: FastAPI):
     loop.set_exception_handler(_asyncio_exception_handler)
 
     _workflow._http = httpx.AsyncClient(
-        timeout=httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0),
-        limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
+        timeout=httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=10.0),
+        limits=httpx.Limits(max_connections=200, max_keepalive_connections=50),
     )
     await asyncio.to_thread(probe_cosmos)
     logger.info("main_agent_started environment=%s", settings.ENVIRONMENT)
