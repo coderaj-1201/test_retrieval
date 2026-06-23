@@ -114,7 +114,7 @@ async def run_orchestrator(inp: OrchestratorInput) -> FinalResponse:
         if _is_reformat_command(user_query.text) and not inp.last_answer:
             return FinalResponse(
                 status="out_of_scope",
-                answer="There's nothing to condense yet! Ask me something first — I can help with HR, IT, Legal, or Operations policies.",
+                answer="There's nothing to condense yet! Ask me something first — I can help with Operations policies and procedures.",
                 domain=None, sources=[], confidence=1.0, attempts_used=0,
                 conversation_id=user_query.conversation_id,
                 user_id=user_query.user_id,

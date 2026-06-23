@@ -6,7 +6,7 @@ Used by: agents/orchestrator_agent.py → classify_query()
 Fires:   On EVERY incoming user message, before any retrieval.
 
 Purpose:
-  Determines whether the query belongs to an enterprise domain (HR/Legal/IT/OPS)
+  Determines whether the query belongs to the OPS enterprise domain
   or falls outside scope (greeting, general, decision-making, offensive, decline,
   clarify). Also detects follow-ups, selects the retrieval tool, and generates the
   deflection message when the domain is none.
@@ -20,7 +20,7 @@ Response types (domain = none):
   clarify        — short/ambiguous, likely a follow-up but context is unclear
   decision_making— "should I fire X?" / "is it okay to..." — info-only boundary
   offensive      — rude/abusive/inappropriate — firm, equal-energy, clear decline
-  decline        — off-topic (sports, trivia, personal) — polite, firm, redirect
+  decline        — off-topic (trivia, personal) — polite, firm, redirect
 """
 from __future__ import annotations
 
@@ -30,13 +30,13 @@ from shared.models import DOMAIN_DESCRIPTIONS, Domain
 # Deterministic — not LLM-generated.
 STREAK_REMINDER = (
     "\n\n*Just a heads-up — I'm here specifically for enterprise policy queries "
-    "(HR, IT, Legal, Operations). Happy to help when you have one!*"
+    "(Operations). Happy to help when you have one!*"
 )
 
 # Firmer version for streaks >= 6.
 STREAK_REMINDER_FIRM = (
     "\n\n*Quick reminder: I'm an enterprise policy assistant and can only "
-    "help with work-related queries — HR, IT, Legal, and Operations topics. "
+    "help with work-related queries — Operations topics. "
     "Let me know when you have one of those!*"
 )
 

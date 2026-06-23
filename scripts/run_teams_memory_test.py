@@ -4,7 +4,7 @@ scripts/run_teams_memory_test.py
 Memory + reformat test script simulating a realistic Teams bot conversation.
 
 Tests:
-  - Domain routing (HR, IT, OPS, LEGAL)
+  - Domain routing (OPS)
   - Follow-up context retention (pronouns, implicit references)
   - Reformat instructions (summarize, one-liner, bullet points)
   - Arithmetic correctness (caps, remainders)
@@ -139,7 +139,7 @@ TURNS: list[Turn] = [
         min_conf = 0.0,
     ),
 
-    # ── S4: IT — MFA and laptop ───────────────────────────────────────────────
+    # ── S4: OPS — operational query ───────────────────────────────────────────────
     Turn(
         label    = "S4-T1 | MFA setup deadline",
         question = "What is the deadline for employees to set up multi-factor authentication?",
@@ -206,7 +206,7 @@ TURNS: list[Turn] = [
         min_conf = 0.0,
     ),
     Turn(
-        label    = "S6-T3 | Recovery — back to HR",
+        label    = "S6-T3 | Recovery — back to OPS",
         question = "Okay, what is the meal allowance for business travel?",
         checks   = [],
         min_conf = 0.45,

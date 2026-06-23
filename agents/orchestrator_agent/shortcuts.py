@@ -198,8 +198,8 @@ async def _generate_personality_response(
         Falls back to a plain static string on LLM failure so Path A never errors.
     """
     _FALLBACKS = {
-        "greeting":        "Hey! I'm here for HR, IT, Legal, and Operations questions — what can I help with?",
-        "general":         "I'm an enterprise policy assistant — ask me anything about HR, IT, Legal, or Operations.",
+        "greeting":        "Hey! Got a question? I'm here.",
+        "general":         "I'm an enterprise operations assistant — ask me anything about ops policies and procedures.",
         "clarify":         "Could you clarify what you'd like to follow up on? Happy to help.",
         "decision_making": "I can pull up relevant policies to help inform your decision — want me to?",
         "offensive":       "That's not something I'll engage with. Policy questions only.",

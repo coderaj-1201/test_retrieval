@@ -106,7 +106,7 @@ TURNS: list[Turn] = [
     ),
 
     # ══════════════════════════════════════════════════════════════════════════
-    # BLOCK 3 — Mixed-domain batch (some OPS/HR, some OOS)
+    # BLOCK 3 — Mixed-domain batch (some OPS, some OOS)
     # ══════════════════════════════════════════════════════════════════════════
     Turn(
         label    = "B3-T1 | Mixed batch: 3 OPS + 1 OOS",
