@@ -139,6 +139,73 @@ def _sb_send(escalation_type: str, payload: dict, correlation_id: str) -> None:
             raise
 
 
+# ── Ticket body builder ────────────────────────────────────────────────────────
+
+def _build_ticket_body(
+    *,
+    escalation_type: str,
+    domain: str,
+    question_text: str,
+    conversation_id: str,
+    user_id: str,
+    question_id: str,
+    timestamp: str,
+    previous_answer: str | None,
+    sources: list[dict] | None,
+    feedback_rating: str | None,
+    feedback_comment: str | None,
+    issue_summary: str | None,
+    footer: str = "",
+) -> str:
+    lines: list[str] = [
+        f"=== {escalation_type} ===",
+        "",
+    ]
+
+    if issue_summary:
+        lines += ["--- Issue Summary (AI-generated) ---", issue_summary, ""]
+
+    lines += [
+        "--- User Question ---",
+        question_text,
+        "",
+        f"Domain:          {domain}",
+        f"User ID:         {user_id}",
+        f"Conversation ID: {conversation_id}",
+        f"Question ID:     {question_id}",
+        f"Timestamp:       {timestamp}",
+        "",
+    ]
+
+    if previous_answer:
+        lines += [
+            "--- Bot's Previous Answer ---",
+            previous_answer[:2000] + ("..." if len(previous_answer) > 2000 else ""),
+            "",
+        ]
+
+    if sources:
+        lines.append("--- Sources Referenced ---")
+        for i, s in enumerate(sources[:5], 1):
+            title = s.get("title") or s.get("doc_name") or s.get("source") or "Unknown"
+            url   = s.get("url") or s.get("doc_url") or ""
+            lines.append(f"  {i}. {title}" + (f" — {url}" if url else ""))
+        lines.append("")
+
+    if feedback_rating or feedback_comment:
+        lines.append("--- User Feedback ---")
+        if feedback_rating:
+            lines.append(f"  Rating:  {feedback_rating}")
+        if feedback_comment:
+            lines.append(f"  Comment: {feedback_comment}")
+        lines.append("")
+
+    if footer:
+        lines += [footer, ""]
+
+    return "\n".join(lines)
+
+
 # ── Public interface ───────────────────────────────────────────────────────────
 
 def is_escalation_configured() -> bool:
@@ -154,6 +221,11 @@ def raise_ticket(
     domain: str,
     conversation_reference: dict | None = None,
     user_email: str | None = None,
+    previous_answer: str | None = None,
+    sources: list[dict] | None = None,
+    feedback_rating: str | None = None,
+    feedback_comment: str | None = None,
+    issue_summary: str | None = None,
 ) -> str:
     """
     Create a support ticket.
@@ -165,13 +237,19 @@ def raise_ticket(
 
     if _zendesk_configured():
         subject = f"[{domain.upper()}] Support request from Teams — {question_text[:60]}"
-        body = (
-            f"**Domain:** {domain}\n"
-            f"**Question:** {question_text}\n\n"
-            f"**Conversation ID:** {conversation_id}\n"
-            f"**User ID:** {user_id}\n"
-            f"**Question ID:** {question_id}\n"
-            f"**Timestamp:** {timestamp}\n"
+        body = _build_ticket_body(
+            escalation_type="Support Request",
+            domain=domain,
+            question_text=question_text,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            question_id=question_id,
+            timestamp=timestamp,
+            previous_answer=previous_answer,
+            sources=sources,
+            feedback_rating=feedback_rating,
+            feedback_comment=feedback_comment,
+            issue_summary=issue_summary,
         )
         try:
             ref = _zendesk_create_ticket(
@@ -207,6 +285,11 @@ def raise_ticket(
             "domain":                 domain,
             "timestamp":              timestamp,
             "conversation_reference": conversation_reference or {},
+            "previous_answer":        (previous_answer or "")[:2000],
+            "sources":                sources or [],
+            "feedback_rating":        feedback_rating or "",
+            "feedback_comment":       feedback_comment or "",
+            "issue_summary":          issue_summary or "",
         }
         _sb_send("raise_ticket", payload, correlation_id)
         logger.info(
@@ -230,6 +313,11 @@ def connect_sme(
     domain: str,
     conversation_reference: dict | None = None,
     user_email: str | None = None,
+    previous_answer: str | None = None,
+    sources: list[dict] | None = None,
+    feedback_rating: str | None = None,
+    feedback_comment: str | None = None,
+    issue_summary: str | None = None,
 ) -> str:
     """
     Request SME connection via a Zendesk ticket (or Service Bus fallback).
@@ -241,15 +329,20 @@ def connect_sme(
 
     if _zendesk_configured():
         subject = f"[{domain.upper()}] SME connection request — {question_text[:60]}"
-        body = (
-            f"**SME Connection Request**\n\n"
-            f"**Domain:** {domain}\n"
-            f"**Question:** {question_text}\n\n"
-            f"**Conversation ID:** {conversation_id}\n"
-            f"**User ID:** {user_id}\n"
-            f"**Question ID:** {question_id}\n"
-            f"**Timestamp:** {timestamp}\n\n"
-            f"*Please connect the user with a subject matter expert for this query.*"
+        body = _build_ticket_body(
+            escalation_type="SME Connection Request",
+            domain=domain,
+            question_text=question_text,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            question_id=question_id,
+            timestamp=timestamp,
+            previous_answer=previous_answer,
+            sources=sources,
+            feedback_rating=feedback_rating,
+            feedback_comment=feedback_comment,
+            issue_summary=issue_summary,
+            footer="Please connect the user with a subject matter expert for this query.",
         )
         try:
             ref = _zendesk_create_ticket(
@@ -285,6 +378,11 @@ def connect_sme(
             "domain":                 domain,
             "timestamp":              timestamp,
             "conversation_reference": conversation_reference or {},
+            "previous_answer":        (previous_answer or "")[:2000],
+            "sources":                sources or [],
+            "feedback_rating":        feedback_rating or "",
+            "feedback_comment":       feedback_comment or "",
+            "issue_summary":          issue_summary or "",
         }
         _sb_send("connect_sme", payload, correlation_id)
         logger.info(
