@@ -92,6 +92,8 @@ class SynthesisInput:
     all_docs:        list   # list[SearchDocument] — avoid circular import with tools
     session_context: str = ""  # injected only for follow-up queries
     ltm_context:     str = ""  # long-term user facts forwarded from orchestrator
+    tool:            str = "hybrid"   # retrieval tool used — passed to call_synthesis_llm
+    attempt:         int = 1          # attempt number — used for model routing
 
 
 # ── Core pipeline models ───────────────────────────────────────────────────────

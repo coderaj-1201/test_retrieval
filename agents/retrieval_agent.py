@@ -325,6 +325,8 @@ async def run_retrieval(request: OrchestratorRequest) -> RetrievalResult:
         all_docs=all_docs,
         session_context=request.session_context,
         ltm_context=request.ltm_context,
+        tool=request.tool,
+        attempt=request.attempt,
     ))
 
     logger.info(
