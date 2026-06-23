@@ -38,8 +38,13 @@ STEP 3 — WORK ALL ARITHMETIC ROW BY ROW
     b. Compute gun times explicitly:
          Fixed gun:      time given by user or derived from sunrise offset
          Rolling start:  last gun time = first gun time + (total athletes ÷ athletes-per-min)
-                         Show each step: e.g. 6:50 AM + (2089 ÷ 23/min = 90.8 min ≈ 91 min)
-                                              → 6:50 AM + 1h 31m = 8:21 AM
+                         The athletes-per-min rate MUST come from the retrieved document (rolling
+                         start SOP). If not in docs, state the assumed rate explicitly.
+                         Show each step: e.g. 6:40 AM + (2089 ÷ 23/min = 90.8 min ≈ 91 min)
+                                              → 6:40 AM + 1h 31m = 8:11 AM
+                         SELF-CHECK: re-derive last gun time from scratch before using it —
+                         it feeds every downstream cut-off deadline, so an error here
+                         propagates through the entire timeline.
 
     c. For EACH segment and EACH cut-off, compute TWO separate values:
 
@@ -114,17 +119,28 @@ FOR TABULAR DATA — use labelled lines instead of tables:
 
 FOR SCHEDULE ANSWERS — use this exact structure for every segment:
 
-  **[Segment name] — [distance] ([N] loops of [X] miles)**
+  **Rolling Start Derivation** (show once, before the segments)
+  1. Athletes: [N] (source: user input)
+  2. Rate: [X] athletes/min (source: [doc name] or "assumed — verify against SOP")
+  3. Duration: [N] ÷ [X] = [decimal min] ≈ [rounded min] = [Xh Ym]
+  4. First AG gun time: [time] (source: user input)
+  5. Last AG gun time: [time] + [Xh Ym] → [result]
+
+  **[Segment name] — [distance] ([N] loops of [X] km/miles)**
   Cut-off rule (from docs): [duration] from individual gun time
 
   Fastest finisher (est.):
-  1. Pro gun time: [time]
-  2. Benchmark split: ~[duration] (source: [doc name] or "assumed — verify against event history")
-  3. Expected finish: [gun time] + [split] → [result]
+  1. Male Pro gun: [time] | Split: ~[duration] (assumed) | Finish: [time] + [split] → [result]
+  2. Female Pro gun: [time] | Split: ~[duration] (assumed) | Finish: [time] + [split] → [result]
+
+  Loop splits (fastest finisher):
+  1. Loop 1 complete: [time] (≈ finish time − remaining loops × per-loop split)
+  2. Loop 2 complete: [time]
+  (3. Loop 3 complete: [time] — run only)
 
   Cut-off deadlines:
-  1. First wave gun time: [time] | Cut-off: [time] + [duration] → [deadline]
-  2. Last wave gun time:  [time] | Cut-off: [time] + [duration] → [deadline]
+  1. First AG gun: [time] + [cut-off duration] → [deadline]
+  2. Last AG gun:  [time] + [cut-off duration] → [deadline]
 
 SUMMARY BLOCK (mandatory at end of every SCHEDULE answer):
 
