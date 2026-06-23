@@ -32,6 +32,7 @@ from shared.azure_clients import get_openai_client
 from shared.config import settings
 from shared.cosmos_client import probe_cosmos
 from shared.logging_config import bind_context, configure_logging, get_logger
+from shared.model_router import get_model_for_query
 from shared.models import (
     Domain, OrchestratorRequest, RetrievalResult, RetrievalStepInput,
     RetrievalTool, SourceDocument, SynthesisInput,
@@ -189,10 +190,13 @@ async def synthesize_answer(inp: SynthesisInput) -> tuple[str, float, list[Sourc
         f"Context:\n{context}\n\nQuestion: {query}"
     )
 
+    tool_str = inp.tool.value if isinstance(inp.tool, RetrievalTool) else str(inp.tool)
+    llm_client, deployment = get_model_for_query(query, tool=tool_str, attempt=inp.attempt)
+
     @llm_retry
     def _call_llm():
-        return get_openai_client().chat.completions.create(
-            model=settings.AZURE_OPENAI_CHAT_DEPLOYMENT,
+        return llm_client.chat.completions.create(
+            model=deployment,
             messages=[
                 {"role": "system", "content": SYNTHESIS_SYSTEM},
                 {"role": "user",   "content": user_content},

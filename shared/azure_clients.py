@@ -74,6 +74,34 @@ def get_openai_client() -> OpenAI:
 _openai_client_cache: dict = {}
 
 
+_claude_client_cache: dict = {}
+
+
+def get_claude_client() -> OpenAI | None:
+    """
+    Returns a cached OpenAI-compatible client pointing at the Claude deployment
+    in Azure AI Foundry. Returns None if CLAUDE_ENDPOINT is not configured,
+    so callers can fall back to the default GPT client gracefully.
+    """
+    if not settings.CLAUDE_ENDPOINT:
+        return None
+    endpoint = str(settings.CLAUDE_ENDPOINT).rstrip("/")
+    token    = _openai_token_provider()()
+    client   = _claude_client_cache.get("client")
+    if client is None:
+        logger.info("claude_auth=managed_identity endpoint=%s", endpoint)
+        client = OpenAI(
+            base_url    = endpoint,
+            api_key     = token,
+            max_retries = 0,
+            timeout     = 60.0,
+        )
+        _claude_client_cache["client"] = client
+    else:
+        client.api_key = token
+    return client
+
+
 @lru_cache(maxsize=1)
 def get_search_client() -> SearchClient:
     logger.info("search_auth=managed_identity")

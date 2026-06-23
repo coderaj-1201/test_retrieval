@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     AZURE_OPENAI_EMBEDDING_DEPLOYMENT: str = "text-embedding-3-large"
     AZURE_OPENAI_API_VERSION: str          = "2025-01-01-preview"
 
+    # ── Claude (complex query routing) ────────────────────────────────────────
+    # Set CLAUDE_ENDPOINT to the Azure AI Foundry model inference endpoint for
+    # Claude. If unset, all queries fall back to AZURE_OPENAI_CHAT_DEPLOYMENT.
+    CLAUDE_ENDPOINT:          AnyHttpUrl | None = None
+    CLAUDE_CHAT_DEPLOYMENT:   str               = "claude-sonnet-4-6"
+
     # ── Azure AI Search ────────────────────────────────────────────────────────
     AZURE_SEARCH_ENDPOINT: AnyHttpUrl | None = None
     AZURE_SEARCH_INDEX: str               = "idx-rag"
