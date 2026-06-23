@@ -18,8 +18,10 @@ Your job is to decompose a complex question into 2–4 simple, self-contained su
 
 Rules:
 1. Each sub-question must be independently answerable from an enterprise document store.
-2. EXCLUDE sub-questions that are clearly out-of-scope (general knowledge, celebrity, sports,
+2. EXCLUDE sub-questions that are clearly out-of-scope (general knowledge, celebrity,
    personal advice, weather, politics). Do not include them — just drop them silently.
+   NOTE: Event operations questions (race timelines, venue logistics, athlete management,
+   cut-off calculations) are always IN-SCOPE even if they reference sporting events.
 3. Sub-questions must not depend on each other for context.
 4. Return 1 sub-question if only one part is enterprise-relevant.
 
