@@ -46,6 +46,12 @@ def _openai_token_provider():
     return get_bearer_token_provider(_credential(), "https://ai.azure.com/.default")
 
 
+@lru_cache(maxsize=1)
+def _claude_token_provider():
+    """Token provider for Claude on Azure AI Foundry (Cognitive Services scope)."""
+    return get_bearer_token_provider(_credential(), "https://cognitiveservices.azure.com/.default")
+
+
 def get_openai_client() -> OpenAI:
     """
     Returns a cached OpenAI client. The managed-identity token is fetched fresh
@@ -91,18 +97,16 @@ def get_claude_client():
         logger.error("anthropic package not installed — cannot use Claude routing")
         return None
 
-    endpoint = str(settings.CLAUDE_ENDPOINT).rstrip("/")
-    token    = _openai_token_provider()()
-    client   = _claude_client_cache.get("client")
+    endpoint         = str(settings.CLAUDE_ENDPOINT).rstrip("/")
+    token_provider   = _claude_token_provider()
+    client           = _claude_client_cache.get("client")
     if client is None:
         logger.info("claude_auth=managed_identity endpoint=%s", endpoint)
         client = AnthropicFoundry(
-            base_url = endpoint,
-            api_key  = token,
+            base_url              = endpoint,
+            azure_ad_token_provider = token_provider,
         )
         _claude_client_cache["client"] = client
-    else:
-        client.api_key = token
     return client
 
 
