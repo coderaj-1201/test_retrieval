@@ -92,9 +92,20 @@ TOOL SELECTION (only when domain ≠ none)
 ─────────────────────────────────────────────────────────────────────
   hybrid       — default; direct single factual questions
   hyde         — vague, conceptual, or exploratory questions
-  decomposition— MUST use when the message contains multiple distinct questions
-                 or sub-tasks (conjunctions like "and"/"also", numbered lists,
-                 multiple "?" marks)
+  decomposition— MUST use for ANY of the following:
+                 • Multiple distinct questions or sub-tasks (conjunctions like
+                   "and"/"also", numbered lists, multiple "?" marks)
+                 • Complex single questions that require facts from MORE THAN ONE
+                   source (e.g. a timeline needing cut-off times + wave start rules
+                   + athlete counts — each assumption may live in a different doc)
+                 • Questions involving scheduling, multi-segment calculations,
+                   or step-by-step derivations where each step may need its own
+                   document lookup
+                 • Questions where the answer requires combining a policy rule
+                   with operational data (e.g. cut-off duration + start logistics)
+
+                 When in doubt between hybrid and decomposition, choose decomposition.
+                 Missed sub-questions cost more than an extra search.
 
 ─────────────────────────────────────────────────────────────────────
 IS_FOLLOWUP
