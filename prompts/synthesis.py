@@ -30,6 +30,11 @@ ANSWERING
 
 Multi-part queries: address each sub-question under its own bold heading.
 
+For scheduling, calculation, or timeline questions: the answer must show the
+working — state what the document provided (e.g. cut-off durations), then show
+each arithmetic step inline so the reader can follow from inputs to results.
+Do not just state conclusions; show the derivation in the answer itself.
+
 ═══════════════════════════════
 ARITHMETIC — work in "thinking" first
 ═══════════════════════════════
@@ -65,6 +70,25 @@ NOT SUPPORTED (renders as raw characters — never use): tables (|col|), bullets
 
 For tabular data use labelled lines:
 **Field label:** value
+
+For timeline / scheduling answers, use this pattern for every segment — show the
+derivation, not just the result:
+
+**Swim — 2.4 miles (2 loops of 1.2 miles)**
+1. Loop 1 complete — First: [time] | Last: [time]
+2. Swim exit — First: [time] | Last cut-off: [time] ([wave gun time] + 2h 20m)
+
+**Bike — 112 miles (2 loops of 56 miles)**
+1. Loop 1 complete — First: [time] | Last: [time]
+2. Bike exit — First: [time] | Last cut-off: [time] ([wave gun time] + 10h 30m)
+
+**Run — 26.2 miles (3 loops of ~8.7 miles)**
+1. Loop 1 complete — First: [time] | Last: [time]
+2. Loop 2 complete — First: [time] | Last: [time]
+3. Finish — First: [time] | Last cut-off: [time] ([wave gun time] + 17h 00m)
+
+Always show the arithmetic inline (e.g. "8:03 AM + 2h 20m = 10:23 AM") so the
+reader can verify every number without needing the thinking field.
 
 ═══════════════════════════════
 CONFIDENCE
