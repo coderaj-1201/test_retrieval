@@ -32,7 +32,7 @@ from shared.azure_clients import get_openai_client
 from shared.config import settings
 from shared.cosmos_client import probe_cosmos
 from shared.logging_config import bind_context, configure_logging, get_logger
-from shared.model_router import get_model_for_query
+from shared.model_router import call_synthesis_llm
 from shared.models import (
     Domain, OrchestratorRequest, RetrievalResult, RetrievalStepInput,
     RetrievalTool, SourceDocument, SynthesisInput,
@@ -191,28 +191,19 @@ async def synthesize_answer(inp: SynthesisInput) -> tuple[str, float, list[Sourc
     )
 
     tool_str = inp.tool.value if isinstance(inp.tool, RetrievalTool) else str(inp.tool)
-    llm_client, deployment = get_model_for_query(query, tool=tool_str, attempt=inp.attempt)
-
-    @llm_retry
-    def _call_llm():
-        return llm_client.chat.completions.create(
-            model=deployment,
-            messages=[
-                {"role": "system", "content": SYNTHESIS_SYSTEM},
-                {"role": "user",   "content": user_content},
-            ],
-            temperature=settings.SYNTHESIS_TEMPERATURE,
-            max_tokens=settings.SYNTHESIS_MAX_TOKENS,
-            response_format={"type": "json_object"},
-        )
 
     try:
-        resp = await asyncio.to_thread(_call_llm)
+        raw_content, model_used = await call_synthesis_llm(
+            system=SYNTHESIS_SYSTEM,
+            user=user_content,
+            query=query,
+            tool=tool_str,
+            attempt=inp.attempt,
+        )
+        logger.info("synthesis_model_used=%s", model_used)
     except Exception as exc:
         logger.error("synthesis_llm_error query_preview=%.60s: %s", query, exc, exc_info=True)
         return "Failed to synthesise an answer due to an internal error.", 0.0, [], False, []
-
-    raw_content = resp.choices[0].message.content.strip()
 
     try:
         parsed        = json.loads(raw_content)

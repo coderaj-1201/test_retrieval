@@ -77,24 +77,28 @@ _openai_client_cache: dict = {}
 _claude_client_cache: dict = {}
 
 
-def get_claude_client() -> OpenAI | None:
+def get_claude_client():
     """
-    Returns a cached OpenAI-compatible client pointing at the Claude deployment
-    in Azure AI Foundry. Returns None if CLAUDE_ENDPOINT is not configured,
-    so callers can fall back to the default GPT client gracefully.
+    Returns a cached AnthropicFoundry client for the Claude deployment.
+    Returns None if CLAUDE_ENDPOINT is not configured.
+    The managed-identity bearer token is used as the api_key (refreshed each call).
     """
     if not settings.CLAUDE_ENDPOINT:
         return None
+    try:
+        from anthropic import AnthropicFoundry  # type: ignore[import-untyped]
+    except ImportError:
+        logger.error("anthropic package not installed — cannot use Claude routing")
+        return None
+
     endpoint = str(settings.CLAUDE_ENDPOINT).rstrip("/")
     token    = _openai_token_provider()()
     client   = _claude_client_cache.get("client")
     if client is None:
         logger.info("claude_auth=managed_identity endpoint=%s", endpoint)
-        client = OpenAI(
-            base_url    = endpoint,
-            api_key     = token,
-            max_retries = 0,
-            timeout     = 60.0,
+        client = AnthropicFoundry(
+            base_url = endpoint,
+            api_key  = token,
         )
         _claude_client_cache["client"] = client
     else:

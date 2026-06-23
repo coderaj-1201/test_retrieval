@@ -8,20 +8,20 @@ Complexity signals (any one triggers Claude):
   - Multiple questions in one query (>1 question mark)
   - Two or more complexity keywords present
 
-Routing only applies to the synthesis LLM call in retrieval_agent.
+Routing only applies to synthesis in retrieval_agent.
 Classification, shortcuts, HyDE, and decomposition always use GPT (fast,
-structured output, cheap) — Claude is reserved for answer generation.
+structured output, cheap).
 
 If CLAUDE_ENDPOINT is not set, all queries use GPT regardless of complexity.
 """
 from __future__ import annotations
 
+import asyncio
 import re
+from typing import Callable
 
-from shared.azure_clients import get_claude_client, get_openai_client
 from shared.config import settings
 from shared.logging_config import get_logger
-from openai import OpenAI
 
 logger = get_logger(__name__)
 
@@ -42,8 +42,7 @@ def is_complex(query: str, tool: str = "hybrid", attempt: int = 1) -> bool:
         return True
     if tool == "decomposition":
         return True
-    words = query.split()
-    if len(words) > 50:
+    if len(query.split()) > 50:
         return True
     if query.count("?") > 1:
         return True
@@ -52,23 +51,77 @@ def is_complex(query: str, tool: str = "hybrid", attempt: int = 1) -> bool:
     return False
 
 
-def get_model_for_query(
+def _call_gpt(system: str, user: str) -> str:
+    """Synchronous GPT call — run via asyncio.to_thread."""
+    from shared.azure_clients import get_openai_client
+    from shared.retry import llm_retry
+
+    @llm_retry
+    def _inner():
+        return get_openai_client().chat.completions.create(
+            model=settings.AZURE_OPENAI_CHAT_DEPLOYMENT,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user",   "content": user},
+            ],
+            temperature=settings.SYNTHESIS_TEMPERATURE,
+            max_tokens=settings.SYNTHESIS_MAX_TOKENS,
+            response_format={"type": "json_object"},
+        )
+
+    resp = _inner()
+    return resp.choices[0].message.content.strip()
+
+
+def _call_claude(system: str, user: str) -> str:
+    """Synchronous Claude call via AnthropicFoundry — run via asyncio.to_thread."""
+    from shared.azure_clients import get_claude_client
+    from shared.retry import llm_retry
+
+    client = get_claude_client()
+    if client is None:
+        raise RuntimeError("Claude client not available")
+
+    @llm_retry
+    def _inner():
+        return client.messages.create(
+            model=settings.CLAUDE_CHAT_DEPLOYMENT,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+            max_tokens=settings.SYNTHESIS_MAX_TOKENS,
+        )
+
+    resp = _inner()
+    return resp.content[0].text.strip()
+
+
+async def call_synthesis_llm(
+    system: str,
+    user: str,
     query: str,
     tool: str = "hybrid",
     attempt: int = 1,
-) -> tuple[OpenAI, str]:
+) -> tuple[str, str]:
     """
-    Returns (llm_client, deployment_name) for the given query context.
-    Falls back to GPT if Claude is not configured or client init fails.
+    Route and call the appropriate LLM for synthesis.
+    Returns (raw_content_str, model_used).
+    Falls back to GPT if Claude fails.
     """
-    if is_complex(query, tool, attempt):
-        claude = get_claude_client()
-        if claude is not None:
-            logger.info(
-                "model_router=claude tool=%s attempt=%d query_preview=%.60s",
-                tool, attempt, query,
-            )
-            return claude, settings.CLAUDE_CHAT_DEPLOYMENT
-        logger.warning("model_router=gpt_fallback claude_endpoint_not_configured")
+    use_claude = is_complex(query, tool, attempt) and settings.CLAUDE_ENDPOINT
 
-    return get_openai_client(), settings.AZURE_OPENAI_CHAT_DEPLOYMENT
+    if use_claude:
+        logger.info(
+            "model_router=claude tool=%s attempt=%d query_preview=%.60s",
+            tool, attempt, query,
+        )
+        try:
+            content = await asyncio.to_thread(_call_claude, system, user)
+            return content, settings.CLAUDE_CHAT_DEPLOYMENT
+        except Exception as exc:
+            logger.warning(
+                "claude_synthesis_failed tool=%s attempt=%d — falling back to GPT: %s",
+                tool, attempt, exc,
+            )
+
+    content = await asyncio.to_thread(_call_gpt, system, user)
+    return content, settings.AZURE_OPENAI_CHAT_DEPLOYMENT
