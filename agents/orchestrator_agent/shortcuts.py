@@ -198,11 +198,11 @@ async def _generate_personality_response(
         Falls back to a plain static string on LLM failure so Path A never errors.
     """
     _FALLBACKS = {
-        "greeting":        "Hey! Got a question? I'm here.",
-        "general":         "I'm an enterprise operations assistant — ask me anything about ops policies and procedures.",
-        "clarify":         "Could you clarify what you'd like to follow up on? Happy to help.",
-        "decision_making": "I can pull up relevant policies to help inform your decision — want me to?",
-        "offensive":       "That's not something I'll engage with. Policy questions only.",
+        "greeting":        "Hello. I am an enterprise operations assistant. Please submit your query.",
+        "general":         "I retrieve and synthesise answers from enterprise operations documents. Please submit a relevant query.",
+        "clarify":         "Your message is unclear. Please rephrase or provide more detail so I can retrieve the relevant information.",
+        "decision_making": "I provide document-grounded information only, not recommendations. I can retrieve relevant policies or guidelines — please specify what you need.",
+        "offensive":       "This assistant handles enterprise operations queries only.",
     }
 
     user_content = f"response_type: {response_type}\n\nUser message: {query}"
@@ -217,8 +217,8 @@ async def _generate_personality_response(
                 {"role": "system", "content": PERSONALITY_SYSTEM},
                 {"role": "user",   "content": user_content},
             ],
-            temperature=0.7,
-            max_tokens=150,
+            temperature=0.1,
+            max_tokens=120,
         )
 
     try:
