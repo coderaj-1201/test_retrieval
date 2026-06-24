@@ -1,16 +1,17 @@
 """
 Model router — selects GPT-4.1 (fast, simple) or Claude Sonnet (complex).
 
-Complexity signals (any one triggers Claude):
-  - Tool is "decomposition" (orchestrator already decided it's multi-hop)
-  - Attempt > 1 (GPT failed/low confidence — retry with stronger model)
+Claude is used ONLY when the query is genuinely complex:
+  - Tool is "decomposition" (orchestrator decided it's multi-hop)
   - Query word count > 50
   - Multiple questions in one query (>1 question mark)
   - Two or more complexity keywords present
 
+Retries (attempt > 1) stay on GPT — a retry means GPT found no docs,
+not that the question is complex. Claude is never used as a fallback.
+
 Routing only applies to synthesis in retrieval_agent.
-Classification, shortcuts, HyDE, and decomposition always use GPT (fast,
-structured output, cheap).
+Classification, shortcuts, HyDE, and decomposition always use GPT.
 
 If CLAUDE_ENDPOINT is not set, all queries use GPT regardless of complexity.
 """
@@ -38,8 +39,6 @@ _COMPLEXITY_KEYWORDS = re.compile(
 
 
 def is_complex(query: str, tool: str = "hybrid", attempt: int = 1) -> bool:
-    if attempt > 1:
-        return True
     if tool == "decomposition":
         return True
     if len(query.split()) > 50:
