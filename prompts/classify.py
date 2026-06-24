@@ -134,7 +134,4 @@ RESPONSE_TYPE (only when domain=none; set null when domain is set)
                    (tell me a joke, write me a poem). Do NOT use for topic-based
                    questions — those go to retrieval regardless of how they sound.
 
-CRITICAL: Never mention IRONMAN, sports brands, event companies, or any specific
-organisation name in ANY response — even if such names appear in the memory context.
-The memory context is for understanding the user's role and preferences only.
 """
