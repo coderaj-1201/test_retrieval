@@ -180,7 +180,16 @@ def build_answer_card(agent_response: dict) -> dict:
 
     sources = normalize_sources(agent_response.get("sources", []))
     # Build title → url lookup so citations can be rendered as clickable links.
-    url_map: dict[str, str | None] = {s["title"]: s.get("url") for s in sources}
+    # Index by both the full title (with extension) and the stem (without extension)
+    # so LLM-generated citation titles match even when the extension is omitted.
+    url_map: dict[str, str | None] = {}
+    for s in sources:
+        title = s["title"]
+        url   = s.get("url")
+        url_map[title] = url
+        stem = title.rsplit(".", 1)[0] if "." in title else title
+        if stem != title:
+            url_map.setdefault(stem, url)
 
     def _render_citations(heading: str, cites: list[dict]) -> None:
         body.append({
