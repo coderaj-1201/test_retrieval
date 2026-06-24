@@ -92,7 +92,7 @@ class _ContentSizeLimitMiddleware(BaseHTTPMiddleware):
 # ── Downstream helpers ─────────────────────────────────────────────────────────
 
 async def call_main_agent(payload: dict) -> dict:
-    async with httpx.AsyncClient(timeout=270.0) as client:
+    async with httpx.AsyncClient() as client:
         resp = await client.post(
             f"{MAIN_AGENT_URL}/query",
             json=payload,
@@ -103,7 +103,7 @@ async def call_main_agent(payload: dict) -> dict:
 
 
 async def call_feedback(payload: dict) -> dict:
-    async with httpx.AsyncClient(timeout=15.0) as client:
+    async with httpx.AsyncClient() as client:
         resp = await client.post(
             f"{MAIN_AGENT_URL}/feedback",
             json=payload,

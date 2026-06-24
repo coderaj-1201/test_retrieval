@@ -37,7 +37,6 @@ async def lifespan(_app: FastAPI):
     """Startup: open shared HTTP client, probe Cosmos. Shutdown: drain client."""
     _register_sigterm()
     _retrieval._http = httpx.AsyncClient(
-        timeout=httpx.Timeout(connect=5.0, read=60.0, write=10.0, pool=5.0),
         limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
     )
     await asyncio.to_thread(probe_cosmos)

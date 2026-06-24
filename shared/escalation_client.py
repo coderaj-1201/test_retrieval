@@ -74,7 +74,7 @@ def _zendesk_create_ticket(
     api_token = settings.ZENDESK_API_TOKEN.get_secret_value()  # type: ignore[union-attr]
 
     try:
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client() as client:
             resp = client.post(
                 f"https://{subdomain}.zendesk.com/api/v2/tickets",
                 auth=(f"{user_email}/token", api_token),

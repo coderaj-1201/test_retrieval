@@ -52,7 +52,7 @@ async def _call_retrieval(req: OrchestratorRequest) -> RetrievalResult:
         "user_id":         req.user_id,
         "question_id":     req.question_id,
     }
-    client = _http or httpx.AsyncClient(timeout=httpx.Timeout(connect=5.0, read=180.0))
+    client = _http or httpx.AsyncClient()
     headers = {**_internal_headers(), "X-Request-ID": req.question_id}
     resp = await client.post(
         f"{str(settings.RETRIEVAL_URL).rstrip('/')}/retrieve",
