@@ -114,11 +114,21 @@ STRUCTURE PATTERN for policy / procedure answers:
   2. [Second condition, step, or elaboration]
   3. [Third — continue as needed]
 
+  CRITICAL — Details must use specific values from the documents:
+  - If the doc says "2–3 pages", write "2–3 pages" — NOT "appropriate length"
+  - If the doc says "Template 10 AA 003", write "Template 10 AA 003" — NOT "a standardized template"
+  - If the doc names a specific system, location, or person — use the exact name
+  - Never replace a concrete fact with a vague restatement
+
   **Important Notes**
   [Key exceptions, edge cases, or warnings from the document.]
 
   **Next Steps**
-  [What the person should do with this information.]
+  [ONLY include this section if there is a concrete, actionable step grounded in
+  the retrieved documents — e.g. "submit via SharePoint", "contact X team", "apply
+  before date Y". If the answer is purely informational and no action is implied,
+  OMIT this section entirely. Do NOT invent generic advice like "refer to the template"
+  or "consult the policy" — those add no value and should be omitted.]
 
 For tabular data format as labelled lines:
 **Swim Start:** 6:30 AM (first) / 7:00 AM (last)
@@ -278,7 +288,7 @@ What time does the library close on Saturdays, and how much is the late return f
         "role": "assistant",
         "content": """\
 {
-  "thinking": "STEP 1 — CLASSIFY\\nType: LOOKUP. Two specific facts to extract from one document.\\n\\nSTEP 2 — DECOMPOSE\\n1. What is the Saturday closing time?\\n2. What is the late return fine per day?\\n\\nSTEP 3 — MAP FACTS TO SOURCES\\n- Saturday closing time → City Library Visitor Information Sheet: '10:00 AM to 4:00 PM' ✓\\n- Late fine per day → City Library Visitor Information Sheet: '$0.20 per day per item' ✓\\n- Weekday hours also available for context: Monday–Friday 9:00 AM to 6:00 PM ✓\\n- Sunday/holiday closure noted ✓\\nNo GAPs. No arithmetic needed.\\n\\nSTEP 5 — COMPOSE\\nBoth facts present. Write a rich, structured answer — include full opening hours for context, explain the fine accumulates per item per day, and give next steps.",
+  "thinking": "STEP 1 — CLASSIFY\\nType: LOOKUP. Two specific facts to extract from one document.\\n\\nSTEP 2 — DECOMPOSE\\n1. What is the Saturday closing time?\\n2. What is the late return fine per day?\\n\\nSTEP 3 — MAP FACTS TO SOURCES\\n- Saturday closing time → City Library Visitor Information Sheet: '10:00 AM to 4:00 PM' ✓\\n- Late fine per day → City Library Visitor Information Sheet: '$0.20 per day per item' ✓\\n- Weekday hours also available for context: Monday–Friday 9:00 AM to 6:00 PM ✓\\n- Sunday/holiday closure noted ✓\\nNo GAPs. No arithmetic needed.\\n\\nSTEP 5 — COMPOSE\\nBoth facts present. Use EXACT values from the document: '4:00 PM', '$0.20 per day per item' — not vague restatements.\\nNext Steps: the question is about hours and fines — there IS an actionable next step (return items before closing to avoid fines). Include it. If the question were purely definitional ('what is a fine?'), Next Steps would be omitted.",
 
   "answer": "**Direct Answer**\\nThe library closes at **4:00 PM on Saturdays**. Late returns are charged at **$0.20 per day, per item**.\\n\\n**Full Opening Hours**\\n1. **Monday to Friday:** 9:00 AM – 6:00 PM\\n2. **Saturday:** 10:00 AM – 4:00 PM (opens one hour later and closes two hours earlier than weekdays)\\n3. **Sunday and public holidays:** Closed\\n\\n**Late Return Policy**\\nIf an item is not returned by its due date, a fine of **$0.20 is charged for every calendar day it remains overdue, per item**. Fines accumulate daily until the item is physically returned — there is no grace period mentioned in the policy.\\n\\n**Important Notes**\\n1. Saturday hours are significantly shorter than weekday hours — plan your visit to arrive well before **4:00 PM** to avoid a wasted trip.\\n2. The fine applies **per item** — if you have three overdue books, each accrues its own $0.20 daily charge (e.g. 5 days late × 3 items = $3.00 total).\\n3. The library is fully closed on Sundays and public holidays — returns cannot be made in person on those days.\\n\\n**Next Steps**\\nIf you have items due back, return them before **4:00 PM on Saturday** to avoid further fines. If items are already overdue, return them as soon as possible — each additional day increases the total fine owed.",
 
