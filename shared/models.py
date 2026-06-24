@@ -133,6 +133,7 @@ class RetrievalResult:
     question_id:     str        = ""
     show_citations:  bool       = False
     citations:       list[dict] = field(default_factory=list)
+    gaps:            list[str]  = field(default_factory=list)
 
     @property
     def passed(self) -> bool:

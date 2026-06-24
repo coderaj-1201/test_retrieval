@@ -329,8 +329,8 @@ async def run_orchestrator(inp: OrchestratorInput) -> FinalResponse:
 
         last_result = result
         logger.info(
-            "retrieval_result attempt=%d confidence=%.3f passed=%s",
-            attempt, result.confidence, result.passed,
+            "retrieval_result attempt=%d confidence=%.3f passed=%s gaps=%d",
+            attempt, result.confidence, result.passed, len(result.gaps),
         )
 
         if result.passed:
@@ -348,9 +348,17 @@ async def run_orchestrator(inp: OrchestratorInput) -> FinalResponse:
             )
 
         logger.warning(
-            "confidence_below_threshold attempt=%d confidence=%.3f threshold=%.2f",
+            "confidence_below_threshold attempt=%d confidence=%.3f threshold=%.2f gaps=%s",
             attempt, result.confidence, settings.CONFIDENCE_THRESHOLD,
+            "; ".join(result.gaps[:3]),
         )
+
+        # If synthesis surfaced specific GAPs, append them to the search query
+        # so the next retrieval attempt targets exactly what is missing.
+        if result.gaps and attempt_idx + 1 < settings.MAX_RETRIEVAL_ATTEMPTS:
+            gap_terms = "; ".join(result.gaps[:5])
+            search_query = f"{search_query} — specifically need: {gap_terms}"
+            logger.info("gap_augmented_query attempt=%d query_preview=%.120s", attempt, search_query)
 
     logger.error("orchestrator_failed all_attempts=%d exhausted", settings.MAX_RETRIEVAL_ATTEMPTS)
     return FinalResponse(

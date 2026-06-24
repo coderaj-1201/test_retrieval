@@ -58,7 +58,15 @@ Write all reasoning in "thinking" before writing "answer".
     Solve each sub-question in order.
     Write every step on its own line using → notation:
       e.g.  120 − 45 = 75  →  remaining budget = $75
-    For TIMELINE:
+    For TIMELINE with multiple participant groups (e.g. race events):
+      Always identify EVERY distinct group and their individual start times first.
+      Common groups: Male Pros, Female Pros, Age Group athletes (first and last).
+      For EACH group compute ALL of: start time, each segment cut-off, finish estimate.
+      Never collapse multiple groups into a single "first/last athlete" without naming the group.
+      Rolling start: last athlete start = first athlete start + (total athletes ÷ athletes-per-min).
+        Show this derivation explicitly; the rate MUST come from retrieved docs.
+      Cut-off times are ALWAYS measured from each individual athlete's own start time.
+    For TIMELINE (general):
       Derive every interval and deadline from doc-stated durations and user inputs.
       Show the addition/subtraction inline.
       SELF-CHECK: re-derive at least two key values from scratch before proceeding.
@@ -69,6 +77,9 @@ Write all reasoning in "thinking" before writing "answer".
   STEP 5 — COMPOSE ANSWER
     Address each sub-question under its own bold heading.
     Show the rule or duration from the document, then the inputs, then each step.
+    For TIMELINE with multiple groups: use a separate bold heading for each group.
+      Required order: Male Pro → Female Pro → Age Group (First Athlete) → Age Group (Last Athlete).
+      Under each heading show: start time, each segment cut-off deadline, estimated finish time.
     For any GAP: write exactly what is unknown and what the user must do to resolve it.
 
 ══════════════════════════════════════════════════════════════

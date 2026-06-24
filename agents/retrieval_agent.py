@@ -213,6 +213,14 @@ async def synthesize_answer(inp: SynthesisInput) -> tuple[str, float, list[Sourc
         confidence    = float(parsed.get("confidence", 0.5))
         confidence    = round(min(max(confidence, 0.0), 1.0), 3)
         llm_citations: list[dict] = parsed.get("citations") or []
+        # Extract GAP lines from the thinking scratchpad so the orchestrator
+        # can use them to form targeted follow-up queries on retry.
+        thinking_text = parsed.get("thinking", "")
+        gaps: list[str] = [
+            line.strip()
+            for line in thinking_text.splitlines()
+            if "GAP" in line and line.strip()
+        ]
         # show_citations is gated purely on confidence — by the time a query
         # reaches synthesize_answer, the orchestrator has already classified
         # it as a real in-domain question (greetings/out-of-scope never get
@@ -243,6 +251,7 @@ async def synthesize_answer(inp: SynthesisInput) -> tuple[str, float, list[Sourc
         confidence     = 0.5
         show_citations = False
         llm_citations  = []
+        gaps           = []
 
     # Build SourceDocument list from search results.
     # Deduplicate by title; if we see the same title again with a URL and the
@@ -275,10 +284,10 @@ async def synthesize_answer(inp: SynthesisInput) -> tuple[str, float, list[Sourc
         ))
 
     logger.info(
-        "synthesis_complete confidence=%.3f sources=%d show_citations=%s llm_citations=%d",
-        confidence, len(sources), show_citations, len(llm_citations),
+        "synthesis_complete confidence=%.3f sources=%d show_citations=%s llm_citations=%d gaps=%d",
+        confidence, len(sources), show_citations, len(llm_citations), len(gaps),
     )
-    return answer, confidence, sources, show_citations, llm_citations
+    return answer, confidence, sources, show_citations, llm_citations, gaps
 
 
 async def run_retrieval(request: OrchestratorRequest) -> RetrievalResult:
@@ -322,7 +331,7 @@ async def run_retrieval(request: OrchestratorRequest) -> RetrievalResult:
         len(all_docs), len(docs), len(parent_docs),
     )
 
-    answer, confidence, source_docs, show_citations, llm_citations = await synthesize_answer(SynthesisInput(
+    answer, confidence, source_docs, show_citations, llm_citations, gaps = await synthesize_answer(SynthesisInput(
         query=request.query,
         all_docs=all_docs,
         session_context=request.session_context,
@@ -349,6 +358,7 @@ async def run_retrieval(request: OrchestratorRequest) -> RetrievalResult:
         ],
         show_citations=show_citations,
         citations=llm_citations,
+        gaps=gaps,
         conversation_id=request.conversation_id,
         user_id=request.user_id,
         question_id=request.question_id,
