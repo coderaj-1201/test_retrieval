@@ -310,6 +310,27 @@ async def run_retrieval(request: OrchestratorRequest) -> RetrievalResult:
     else:
         docs = await run_hybrid(step_inp)
 
+    # Self-decomposition: if the initial retrieval returned sparse results
+    # and the query looks multi-part, automatically run decomposition and
+    # merge the additional docs in. This lets the retrieval agent act on
+    # its own without waiting for the orchestrator to escalate the tool.
+    _MULTI_SIGNALS = ("?", " and ", " also ", "timeline", "each", "per ", "all ", "every ", "breakdown")
+    query_lower = request.query.lower()
+    is_multi_part = sum(1 for s in _MULTI_SIGNALS if s in query_lower) >= 2
+    if request.tool != RetrievalTool.DECOMPOSITION and len(docs) < 4 and is_multi_part:
+        logger.info(
+            "self_decomposition_triggered tool=%s initial_docs=%d query_preview=%.80s",
+            request.tool, len(docs), request.query,
+        )
+        try:
+            decomp_docs = await run_decomposition(step_inp)
+            existing_ids = {d.id for d in docs}
+            new_docs = [d for d in decomp_docs if d.id not in existing_ids]
+            docs = docs + new_docs
+            logger.info("self_decomposition_added docs=%d total=%d", len(new_docs), len(docs))
+        except Exception as exc:
+            logger.warning("self_decomposition_failed: %s", exc)
+
     # Fetch parent chunks in parallel (was serial — each round-trip to AI Search
     # added ~300ms; gathering them concurrently keeps the retrieval tight).
     parent_ids = list({d.parent_id for d in docs if d.parent_id})[:3]
