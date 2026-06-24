@@ -164,14 +164,17 @@ def _sanitize_for_teams(text: str) -> str:
 def build_answer_card(agent_response: dict) -> dict:
     """Answer card with conditional citation block.
 
-    Citation logic (mirrors the LLM prompt contract):
-      - show_citations = True  → render citations with per-doc confidence badge
+    Sources always come from AI Search results (agent_response["sources"]) —
+    never from LLM-generated citation titles, which can be mangled/truncated.
+    LLM citations are used only to extract per-doc confidence scores for badges.
+
+    Citation logic:
+      - show_citations = True  → render AI Search sources with confidence badges
       - show_citations = False → render answer only (greetings, low-confidence, errors)
+      - show_citations = False but llm_citations present → show under "Referenced Documents"
     """
-    answer        = _sanitize_for_teams(agent_response.get("answer") or "")
+    answer         = _sanitize_for_teams(agent_response.get("answer") or "")
     show_citations = bool(agent_response.get("show_citations", False))
-    # LLM-generated citations (title + confidence + excerpt) take priority.
-    # Fall back to search-result sources if citations list is absent.
     llm_citations: list[dict] = agent_response.get("citations") or []
 
     body: list[dict] = [
@@ -179,57 +182,41 @@ def build_answer_card(agent_response: dict) -> dict:
     ]
 
     sources = normalize_sources(agent_response.get("sources", []))
-    # Build title → url lookup so citations can be rendered as clickable links.
-    # Index by both the full title (with extension) and the stem (without extension)
-    # so LLM-generated citation titles match even when the extension is omitted.
-    url_map: dict[str, str | None] = {}
-    for s in sources:
-        title = s["title"]
-        url   = s.get("url")
-        url_map[title] = url
-        stem = title.rsplit(".", 1)[0] if "." in title else title
-        if stem != title:
-            url_map.setdefault(stem, url)
 
-    def _render_citations(heading: str, cites: list[dict]) -> None:
+    # Build a confidence score lookup from LLM citations keyed by normalised title stem.
+    # Used only for badge display — titles and URLs always come from AI Search sources.
+    def _stem(t: str) -> str:
+        s = t.rsplit(".", 1)[0] if "." in t else t
+        return re.sub(r"\s*\(p\.\d+\).*$", "", s).strip().lower()
+
+    confidence_map: dict[str, float] = {}
+    for cite in llm_citations:
+        raw = cite.get("title") or ""
+        if raw:
+            confidence_map[_stem(raw)] = float(cite.get("confidence", 0.0))
+
+    def _render_sources(heading: str, src_list: list[dict]) -> None:
+        if not src_list:
+            return
         body.append({
             "type": "TextBlock", "text": f"**{heading}**",
             "wrap": True, "size": "Small", "weight": "Bolder",
             "spacing": "Medium", "separator": True,
         })
-        seen: set[str] = set()
-        for cite in cites:
-            raw_title = cite.get("title") or "Source"
-            title = re.sub(r"\s*\(p\.\d+\).*$", "", raw_title).strip()
-            if title in seen:
-                continue
-            seen.add(title)
-            if len(seen) > 8:
-                break
-            score = float(cite.get("confidence", 0.0))
-            url   = url_map.get(title)
+        for src in src_list[:8]:
+            title = src["title"]
+            url   = src.get("url")
+            # Prefer LLM-derived per-doc confidence for the badge; fall back to
+            # AI Search relevance score so there is always something to show.
+            score = confidence_map.get(_stem(title)) or float(src.get("relevance") or 0.0)
             body.append(_citation_row(title, url, score))
 
-    if show_citations and llm_citations:
-        _render_citations("Sources", llm_citations)
+    if show_citations and sources:
+        _render_sources("Sources", sources)
 
-    elif show_citations and not llm_citations:
-        # LLM said show citations but returned none — fall back to search sources
-        if sources:
-            body.append({
-                "type": "TextBlock", "text": "**Sources**",
-                "wrap": True, "size": "Small", "weight": "Bolder",
-                "spacing": "Medium", "separator": True,
-            })
-            for src in sources[:8]:
-                title = src["title"]
-                url   = src.get("url")
-                body.append(_citation_row(title, url))
-
-    elif not show_citations and llm_citations:
-        # Partial / conflicting answer — confidence below threshold but real
-        # documents were referenced. Show them under a softer label.
-        _render_citations("Referenced Documents", llm_citations)
+    elif not show_citations and sources and llm_citations:
+        # Confidence below threshold but real documents were referenced.
+        _render_sources("Referenced Documents", sources)
 
     # show_citations = False and no llm_citations → no block (greeting / full no-match)
 
