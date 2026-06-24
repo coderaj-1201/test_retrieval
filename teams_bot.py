@@ -14,6 +14,7 @@ Security notes:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -187,7 +188,6 @@ class IronmanBot(ActivityHandler):
 
     async def _handle_user_question(self, turn_context: TurnContext) -> None:
         activity = turn_context.activity
-        await turn_context.send_activity(Activity(type=ActivityTypes.typing))
 
         raw_text  = remove_bot_mention(turn_context, activity.text or "")
         user_text = _sanitise_user_text(raw_text)
@@ -235,6 +235,19 @@ class IronmanBot(ActivityHandler):
             user_id, tenant_id, conversation_id, user_text,
         )
 
+        # Send typing indicator every 4 s while the main agent is working.
+        # Teams drops the "typing" indicator after ~5 s, so we refresh it in a loop.
+        stop_typing = asyncio.Event()
+
+        async def _keep_typing():
+            while not stop_typing.is_set():
+                try:
+                    await turn_context.send_activity(Activity(type=ActivityTypes.typing))
+                except Exception:
+                    pass
+                await asyncio.sleep(4)
+
+        typing_task = asyncio.create_task(_keep_typing())
         try:
             data = await call_main_agent({
                 "text":            user_text,
@@ -243,10 +256,15 @@ class IronmanBot(ActivityHandler):
             })
         except Exception as exc:
             logger.error("main_agent_call_failed: %s", exc, exc_info=True)
+            stop_typing.set()
+            typing_task.cancel()
             await turn_context.send_activity(
                 "⚠️ Service temporarily unavailable. Please try again."
             )
             return
+        finally:
+            stop_typing.set()
+            typing_task.cancel()
 
         answer_text = data.get("answer", "").strip()
         msg_status  = data.get("status")
