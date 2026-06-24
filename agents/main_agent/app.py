@@ -61,6 +61,7 @@ async def lifespan(_app: FastAPI):
     loop.set_exception_handler(_asyncio_exception_handler)
 
     _workflow._http = httpx.AsyncClient(
+        timeout=None,
         limits=httpx.Limits(max_connections=200, max_keepalive_connections=50),
     )
     await asyncio.to_thread(probe_cosmos)

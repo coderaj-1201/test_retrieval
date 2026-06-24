@@ -89,7 +89,7 @@ def _internal_headers() -> dict[str, str]:
 async def _do_orchestrate(payload: dict) -> dict:
     """Raw HTTP POST to the Orchestrator — wrapped by the circuit breaker."""
     global _http
-    client = _http or httpx.AsyncClient()
+    client = _http or httpx.AsyncClient(timeout=None)
     headers = {**_internal_headers(), "X-Request-ID": payload.get("question_id", "")}
     resp = await client.post(
         f"{str(settings.ORCHESTRATOR_URL).rstrip('/')}/orchestrate",
