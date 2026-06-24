@@ -50,6 +50,7 @@ def _safe_url(url: str | None) -> str | None:
     if not _ALLOWED_HOST_RE.match(parsed.netloc):
         logger.warning("card_mapper_url_blocked host=%s url=%.120s", parsed.netloc, url)
         return None
+    logger.debug("card_mapper_url_allowed host=%s url=%.120s", parsed.netloc, url)
     return _url_quote(url, safe=":/?=&%#+@!$,;")
 
 
