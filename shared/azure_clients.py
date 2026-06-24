@@ -68,6 +68,7 @@ def get_openai_client() -> OpenAI:
             base_url    = endpoint,
             api_key     = token,
             max_retries = 0,
+            timeout     = 600,
         )
         _openai_client_cache["client"] = client
     else:
