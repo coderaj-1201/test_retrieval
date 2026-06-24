@@ -78,9 +78,10 @@ def normalize_sources(sources: Any) -> list[dict]:
         if raw_url:
             seen_urls.add(raw_url)
         result.append({
-            "title": title,
-            "url":   _safe_url(raw_url),
-            "page":  s.get("page") or s.get("page_number"),
+            "title":     title,
+            "url":       _safe_url(raw_url),
+            "page":      s.get("page") or s.get("page_number"),
+            "relevance": s.get("relevance") or s.get("score"),
         })
     return result
 
