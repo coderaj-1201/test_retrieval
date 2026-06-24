@@ -41,7 +41,7 @@ from shared.retry import llm_retry
 from tools.hybrid_search_tool import SearchDocument, fetch_parent_chunk, hybrid_search
 from tools.hyde_tool import generate_hypothetical_document
 from tools.query_decomposition_tool import decompose_query
-from prompts import SYNTHESIS_SYSTEM
+from prompts.synthesis import build_messages as build_synthesis_messages
 
 configure_logging()
 logger = get_logger(__name__)
@@ -184,18 +184,20 @@ async def synthesize_answer(inp: SynthesisInput) -> tuple[str, float, list[Sourc
     session_context = inp.session_context
     ltm_context     = inp.ltm_context
     memory_block    = "\n\n".join(filter(None, [ltm_context, session_context]))
-    user_content = (
-        f"{memory_block}\n\nContext:\n{context}\n\nQuestion: {query}"
-        if memory_block else
-        f"Context:\n{context}\n\nQuestion: {query}"
+
+    # Format retrieved docs in the template the few-shot examples expect.
+    retrieved_docs = context
+    live_query = (
+        f"{memory_block}\n\n{query}" if memory_block else query
     )
+
+    synthesis_messages = build_synthesis_messages(live_query, retrieved_docs)
 
     tool_str = inp.tool.value if isinstance(inp.tool, RetrievalTool) else str(inp.tool)
 
     try:
         raw_content, model_used = await call_synthesis_llm(
-            system=SYNTHESIS_SYSTEM,
-            user=user_content,
+            messages=synthesis_messages,
             query=query,
             tool=tool_str,
             attempt=inp.attempt,

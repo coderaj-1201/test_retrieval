@@ -30,7 +30,7 @@ from prompts.hyde import HYDE_SYSTEM
 from prompts.ltm_update import LTM_UPDATE_SYSTEM
 from prompts.personality import PERSONALITY_SYSTEM
 from prompts.reformat import REFORMAT_SYSTEM, REFORMAT_VERBS
-from prompts.synthesis import SYNTHESIS_SYSTEM
+from prompts.synthesis import SYNTHESIS_SYSTEM, build_messages as build_synthesis_messages
 from prompts.rewrite import REWRITE_SYSTEM
 from prompts.whole_chat_summary import WHOLE_CHAT_SUMMARY_SYSTEM, WHOLE_CHAT_PHRASES
 

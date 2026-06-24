@@ -51,7 +51,7 @@ def is_complex(query: str, tool: str = "hybrid", attempt: int = 1) -> bool:
     return False
 
 
-def _call_gpt(system: str, user: str) -> str:
+def _call_gpt(messages: list[dict]) -> str:
     """Synchronous GPT call — run via asyncio.to_thread."""
     from shared.azure_clients import get_openai_client
     from shared.retry import llm_retry
@@ -60,10 +60,7 @@ def _call_gpt(system: str, user: str) -> str:
     def _inner():
         return get_openai_client().chat.completions.create(
             model=settings.AZURE_OPENAI_CHAT_DEPLOYMENT,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user",   "content": user},
-            ],
+            messages=messages,
             temperature=settings.SYNTHESIS_TEMPERATURE,
             max_tokens=settings.SYNTHESIS_MAX_TOKENS,
             response_format={"type": "json_object"},
@@ -73,7 +70,7 @@ def _call_gpt(system: str, user: str) -> str:
     return resp.choices[0].message.content.strip()
 
 
-def _call_claude(system: str, user: str) -> str:
+def _call_claude(messages: list[dict]) -> str:
     """Synchronous Claude call via AnthropicFoundry — run via asyncio.to_thread."""
     from shared.azure_clients import get_claude_client
     from shared.retry import llm_retry
@@ -82,12 +79,21 @@ def _call_claude(system: str, user: str) -> str:
     if client is None:
         raise RuntimeError("Claude client not available")
 
+    # Claude API takes system as a top-level param; extract it from messages list.
+    system_content = ""
+    non_system = []
+    for msg in messages:
+        if msg["role"] == "system":
+            system_content = msg["content"]
+        else:
+            non_system.append(msg)
+
     @llm_retry
     def _inner():
         return client.messages.create(
             model=settings.CLAUDE_CHAT_DEPLOYMENT,
-            system=system,
-            messages=[{"role": "user", "content": user}],
+            system=system_content,
+            messages=non_system,
             max_tokens=settings.SYNTHESIS_MAX_TOKENS,
         )
 
@@ -96,8 +102,7 @@ def _call_claude(system: str, user: str) -> str:
 
 
 async def call_synthesis_llm(
-    system: str,
-    user: str,
+    messages: list[dict],
     query: str,
     tool: str = "hybrid",
     attempt: int = 1,
@@ -115,7 +120,7 @@ async def call_synthesis_llm(
             tool, attempt, query,
         )
         try:
-            content = await asyncio.to_thread(_call_claude, system, user)
+            content = await asyncio.to_thread(_call_claude, messages)
             return content, settings.CLAUDE_CHAT_DEPLOYMENT
         except Exception as exc:
             logger.warning(
@@ -123,5 +128,5 @@ async def call_synthesis_llm(
                 tool, attempt, exc,
             )
 
-    content = await asyncio.to_thread(_call_gpt, system, user)
+    content = await asyncio.to_thread(_call_gpt, messages)
     return content, settings.AZURE_OPENAI_CHAT_DEPLOYMENT
