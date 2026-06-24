@@ -140,9 +140,8 @@ async def run_orchestrator(inp: OrchestratorInput) -> FinalResponse:
         response_type = classification.response_type
 
         # ── "decline" queries go to retrieval — the doc store may have the answer ──
-        # Only pure greetings, general capability, offensive, and clarify messages skip retrieval.
-        # "clarify" means the query is too ambiguous to search — go straight to personality.
-        _HARD_OOS = {"greeting", "general", "offensive", "clarify"}
+        # Only pure greetings, general capability, and offensive messages skip retrieval.
+        _HARD_OOS = {"greeting", "general", "offensive"}
         if response_type not in _HARD_OOS:
             # Use secondary_domain if available, otherwise default to OPS.
             fallback_domain = (
