@@ -107,7 +107,7 @@ async def run_orchestrator(inp: OrchestratorInput) -> FinalResponse:
     # and the query is a reformat verb, just reformat it regardless of domain.
     _last_answer = inp.last_answer or ""
 
-    if _last_answer and _is_reformat_command(user_query.text) and not _is_whole_chat_summary(user_query.text):
+    if settings.ENABLE_SHORTCUTS and _last_answer and _is_reformat_command(user_query.text) and not _is_whole_chat_summary(user_query.text):
         logger.info("reformat_preflight_activated query=%.60s", user_query.text)
         reformatted = await _reformat_prior_answer(user_query.text, _last_answer)
         if reformatted:
@@ -123,7 +123,7 @@ async def run_orchestrator(inp: OrchestratorInput) -> FinalResponse:
         logger.warning("reformat_preflight_fallthrough — continuing to normal routing")
 
     # ── Path A: out-of-scope (greetings, general, offensive, etc.) ────────────
-    if classification.out_of_scope:
+    if settings.ENABLE_SHORTCUTS and classification.out_of_scope:
         # Reformat verb with no prior in-domain context — give a friendly nudge.
         if _is_reformat_command(user_query.text) and not inp.last_answer:
             return FinalResponse(
@@ -248,7 +248,7 @@ async def run_orchestrator(inp: OrchestratorInput) -> FinalResponse:
     # ── Path B: whole-chat guard (reformat already handled in pre-flight above) ─
 
     # ── Path C: whole-chat summary ─────────────────────────────────────────────
-    if _is_whole_chat_summary(user_query.text):
+    if settings.ENABLE_SHORTCUTS and _is_whole_chat_summary(user_query.text):
         logger.info("whole_chat_summary_activated query=%.60s", user_query.text)
         summary_answer = await _summarize_whole_chat(user_query.conversation_id)
         return FinalResponse(

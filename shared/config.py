@@ -138,6 +138,12 @@ class Settings(BaseSettings):
     # ── Domain classification ──────────────────────────────────────────────────
     DOMAIN_CONFIDENCE_THRESHOLD: float = Field(default=0.6, ge=0.0, le=1.0)
 
+    # ── Shortcut bypass ────────────────────────────────────────────────────────
+    # Set ENABLE_SHORTCUTS=false to skip all orchestrator shortcuts (reformat,
+    # whole-chat summary, personality responses) and route everything straight
+    # to retrieval. Useful for debugging retrieval quality in isolation.
+    ENABLE_SHORTCUTS: bool = Field(default=True)
+
     # ── Escalation SLAs ────────────────────────────────────────────────────────
     ESCALATION_SLA_TICKET: str = "4 business hours"
     ESCALATION_SLA_SME:    str = "2 business hours"
